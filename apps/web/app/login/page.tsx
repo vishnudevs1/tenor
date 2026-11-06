@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, googleConfigured } from "@/auth";
 import { LogoMark } from "@/components/Logo";
+import { XLink } from "@/components/XLink";
 import { signInWithGoogle } from "./actions";
 import { GoogleButton } from "./GoogleButton";
 
@@ -68,6 +69,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <Link href="#" className="hover:text-[#0b2a4a]">Terms</Link>
         <span className="font-display text-lg">on Arc</span>
         <Link href="#" className="hover:text-[#0b2a4a]">Privacy</Link>
+        <XLink className="grid size-8 place-items-center rounded-full bg-white/30 hover:bg-white/50 hover:text-[#0b2a4a]" />
       </footer>
     </div>
   );

@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { X_HANDLE, X_URL } from "@/lib/brand";
 import { Logo } from "./Logo";
+import { XLink } from "./XLink";
 
 export function SiteFooter() {
   return (
@@ -10,9 +12,10 @@ export function SiteFooter() {
           <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted">
             Evaluations are simulated. Funded accounts trade real capital owned by Tenor; traders receive a profit share under contract.
           </p>
+          <XLink className="mt-5 inline-grid size-9 place-items-center rounded-full border border-line text-muted transition-colors hover:border-line-strong hover:text-fg" />
         </div>
         {[
-          { h: "Product", l: [["Challenges", "/#challenges"], ["Transparency", "/transparency"], ["Dashboard", "/dashboard"]] },
+          { h: "Product", l: [["Challenges", "/#challenges"], ["Transparency", "/transparency"], ["Dashboard", "/dashboard"], [`X · @${X_HANDLE}`, X_URL]] },
           { h: "Built on Arc", l: [["Arc docs", "https://docs.arc.io"], ["Explorer", "https://explorer.testnet.arc.io"], ["Faucet", "https://faucet.circle.com"]] },
           { h: "Legal", l: [["Terms", "#"], ["Privacy", "#"], ["Restricted regions", "#"]] },
         ].map((c) => (
@@ -21,9 +24,15 @@ export function SiteFooter() {
             <ul className="mt-4 space-y-2.5">
               {c.l.map(([label, href]) => (
                 <li key={label}>
-                  <Link href={href} className="text-sm text-muted hover:text-fg">
-                    {label}
-                  </Link>
+                  {href.startsWith("http") ? (
+                    <a href={href} target="_blank" rel="noopener noreferrer" className="text-sm text-muted hover:text-fg">
+                      {label}
+                    </a>
+                  ) : (
+                    <Link href={href} className="text-sm text-muted hover:text-fg">
+                      {label}
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>
