@@ -94,7 +94,7 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
   return (
     <div className="grid gap-2 p-2 lg:grid-cols-[minmax(0,1fr)_280px_320px]">
       {/* Market header */}
-      <Panel className="flex items-center gap-6 overflow-x-auto px-3 py-2 lg:col-span-2 lg:col-start-1 lg:row-start-1">
+      <Panel className="no-scrollbar flex items-center gap-6 overflow-x-auto px-3 py-2 lg:col-span-2 lg:col-start-1 lg:row-start-1">
         <MarketButton symbol={symbol} onOpen={() => setSearchOpen(true)} />
         <div className="shrink-0">
           <div className="num text-xl font-semibold">{last ? formatPrice(last, market) : mark ? formatPrice(mark, market) : "—"}</div>
@@ -121,7 +121,7 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
 
       {/* Chart */}
       <Panel className="flex h-[440px] flex-col lg:col-start-1 lg:row-start-2 lg:h-[520px]">
-        <div className="flex items-center gap-1 overflow-x-auto border-b border-line px-2 py-1.5">
+        <div className="no-scrollbar flex items-center gap-1 overflow-x-auto border-b border-line px-2 py-1.5">
           {CHART_INTERVALS.map((k) => (
             <button key={k} onClick={() => setInterval_(k)} className={cx("shrink-0 rounded-lg px-2.5 py-1 text-xs", interval === k ? "bg-white/10 text-fg" : "text-muted hover:text-fg")}>
               {k}

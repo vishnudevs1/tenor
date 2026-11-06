@@ -153,7 +153,7 @@ export function MarketSearch({ open, onClose, value, stats, onSelect }: { open: 
           </button>
         </div>
 
-        <div role="tablist" className="flex items-center gap-1 overflow-x-auto border-b border-line px-3 py-2.5">
+        <div role="tablist" className="no-scrollbar flex items-center gap-1 overflow-x-auto border-b border-line px-3 py-2.5">
           {TABS.map((t) => (
             <button
               key={t}
