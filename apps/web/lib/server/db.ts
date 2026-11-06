@@ -48,16 +48,19 @@ CREATE INDEX IF NOT EXISTS accounts_status ON accounts(status);
 -- One active demo per user, enforced by the database rather than a racy read.
 CREATE UNIQUE INDEX IF NOT EXISTS accounts_one_active_demo ON accounts(user_id) WHERE demo = 1 AND status = 'active';
 
-CREATE TABLE IF NOT EXISTS positions (
+-- One row per open trade (hedging mode): every order is its own ticket with its own P&L, TP/SL and close.
+CREATE TABLE IF NOT EXISTS tickets (
+  id          BIGSERIAL PRIMARY KEY,
   account_id  TEXT NOT NULL REFERENCES accounts(id),
   market      TEXT NOT NULL,
   qty         DOUBLE PRECISION NOT NULL,  -- signed: + long, − short
   entry       DOUBLE PRECISION NOT NULL,
   tp          DOUBLE PRECISION,
   sl          DOUBLE PRECISION,
-  opened_at   BIGINT NOT NULL,
-  PRIMARY KEY (account_id, market)
+  open_fee    DOUBLE PRECISION NOT NULL DEFAULT 0,
+  opened_at   BIGINT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS tickets_account ON tickets(account_id, opened_at);
 
 CREATE TABLE IF NOT EXISTS fills (
   id           BIGSERIAL PRIMARY KEY,
@@ -68,10 +71,15 @@ CREATE TABLE IF NOT EXISTS fills (
   price        DOUBLE PRECISION NOT NULL,
   fee          DOUBLE PRECISION NOT NULL,
   realized_pnl DOUBLE PRECISION NOT NULL,
-  reason       TEXT NOT NULL,             -- order | tp | sl | breach | pass
+  reason       TEXT NOT NULL,             -- open | close | tp | sl | breach | pass (legacy: order)
   ts           BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS fills_account ON fills(account_id, ts);
+-- Close fills carry the ticket's open data so per-trade P&L is one row.
+ALTER TABLE fills ADD COLUMN IF NOT EXISTS ticket_id BIGINT;
+ALTER TABLE fills ADD COLUMN IF NOT EXISTS entry DOUBLE PRECISION;
+ALTER TABLE fills ADD COLUMN IF NOT EXISTS open_fee DOUBLE PRECISION;
+ALTER TABLE fills ADD COLUMN IF NOT EXISTS opened_at BIGINT
 `;
 
 export interface Q {
@@ -143,6 +151,11 @@ async function open(): Promise<Driver> {
   await d.tx(async (t) => {
     await t.run("SELECT pg_advisory_xact_lock(727270)");
     for (const stmt of SCHEMA.split(";").map((s) => s.trim()).filter(Boolean)) await t.run(stmt);
+    // v1 → v2: netted positions become one ticket each.
+    if ((await t.one<{ r: string | null }>("SELECT to_regclass('public.positions')::text AS r"))?.r) {
+      await t.run("INSERT INTO tickets (account_id, market, qty, entry, tp, sl, opened_at) SELECT account_id, market, qty, entry, tp, sl, opened_at FROM positions");
+      await t.run("DROP TABLE positions");
+    }
   });
   return d;
 }

@@ -8,14 +8,25 @@ export const dynamic = "force-dynamic";
 
 // Deployment health: which settings are present (never their values) and whether dependencies answer.
 export async function GET() {
+  const timed = async <T,>(p: Promise<T>) => {
+    const t0 = performance.now();
+    const v = await p;
+    return { ...v, ms: Math.round(performance.now() - t0) };
+  };
+  // Warm the DB connection first so the second timing reflects a real query round-trip, not connection setup.
+  await db.one("SELECT 1").catch(() => {});
   const [database, venue] = await Promise.all([
-    db.one("SELECT 1 AS ok").then(
-      () => ({ ok: true, driver: process.env.DATABASE_URL ? "postgres" : "pglite" }),
-      (e: Error) => ({ ok: false, error: e.message.slice(0, 200) }),
+    timed(
+      db.one("SELECT 1 AS ok").then(
+        () => ({ ok: true, driver: process.env.DATABASE_URL ? "postgres" : "pglite" }),
+        (e: Error) => ({ ok: false, error: e.message.slice(0, 200) }),
+      ),
     ),
-    getMarkets().then(
-      (m) => ({ ok: true, markets: Object.keys(m.stats).length }),
-      () => ({ ok: false }),
+    timed(
+      getMarkets().then(
+        (m) => ({ ok: true, markets: Object.keys(m.stats).length }),
+        () => ({ ok: false }),
+      ),
     ),
   ]);
   const config = {

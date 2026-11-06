@@ -13,36 +13,43 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import type { Candle, IntervalKey } from "@/lib/markets";
+import { INTERVAL_SECONDS, isVenueInterval, type Candle, type ChartInterval } from "@/lib/markets";
 import { api } from "@/lib/client";
+import { subscribeTrades, type StreamTrade } from "@/lib/stream";
+
+// TradingView Lightweight Charts, driven tick-by-tick by the venue's trade stream.
+// ≥1m: history from the venue's REST candles, then every trade updates the live candle.
+// 1s/5s: built entirely in the browser from the trade stream (the venue has no sub-minute history).
 
 // Canvas can't read CSS variables — these mirror the tokens in globals.css.
-const C = { up: "#3ddc97", down: "#ff6b6b", text: "#8b93a3", grid: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.08)", accent: "#8cc8ff", warn: "#f5c451" };
-const SECONDS: Record<IntervalKey, number> = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
+const C = { up: "#3ddc97", down: "#ff6b6b", text: "#8b93a3", grid: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.08)", accent: "#8cc8ff" };
+const MAX_LIVE_BARS = 3_000;
 
 export interface ChartLine {
   price: number;
   title: string;
-  tone: "entry" | "tp" | "sl";
+  tone: "entry-long" | "entry-short" | "tp" | "sl";
 }
 
-export function PriceChart({ symbol, interval, mark, decimals, lines }: { symbol: string; interval: IntervalKey; mark?: number; decimals: number; lines: ChartLine[] }) {
+const toBar = (c: Candle) => ({ time: c.time as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close });
+const toVol = (c: Candle) => ({ time: c.time as UTCTimestamp, value: c.volume, color: c.close >= c.open ? "rgba(61,220,151,0.35)" : "rgba(255,107,107,0.35)" });
+
+export function PriceChart({ symbol, interval, decimals, lines }: { symbol: string; interval: ChartInterval; decimals: number; lines: ChartLine[] }) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const candles = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volume = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const last = useRef<Candle | null>(null);
   const priceLines = useRef<IPriceLine[]>([]);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ready" | "waiting" | "error">("loading");
 
   useEffect(() => {
     if (!el.current) return;
     const c = createChart(el.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: C.text, fontFamily: "Inter, ui-sans-serif, system-ui", attributionLogo: false },
+      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: C.text, fontFamily: "Inter, ui-sans-serif, system-ui", attributionLogo: true },
       grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
       rightPriceScale: { borderColor: C.border },
-      timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: false },
+      timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: true, rightOffset: 6 },
       crosshair: { mode: CrosshairMode.Normal },
     });
     candles.current = c.addSeries(CandlestickSeries, { upColor: C.up, downColor: C.down, wickUpColor: C.up, wickDownColor: C.down, borderVisible: false });
@@ -59,46 +66,81 @@ export function PriceChart({ symbol, interval, mark, decimals, lines }: { symbol
     candles.current?.applyOptions({ priceFormat: { type: "price", precision: decimals, minMove: 1 / 10 ** decimals } });
   }, [decimals]);
 
-  // History: load on market/interval change, refresh every 30s so gaps fill in.
+  // Data: history (if any) + live trades. Trades that arrive while history loads are buffered, then replayed.
   useEffect(() => {
+    const series = candles.current;
+    const vol = volume.current;
+    if (!series || !vol) return;
+    const step = INTERVAL_SECONDS[interval];
+    let last: Candle | null = null;
+    let bars = 0;
+    let ready = false;
     let stop = false;
-    let first = true;
+    const pending: StreamTrade[] = [];
+
+    series.setData([]);
+    vol.setData([]);
     setState("loading");
-    const load = async () => {
-      try {
-        const data = await api<Candle[]>(`/api/candles?symbol=${symbol}&interval=${interval}`);
-        if (stop || !candles.current) return;
-        candles.current.setData(data.map((d) => ({ time: d.time as UTCTimestamp, open: d.open, high: d.high, low: d.low, close: d.close })));
-        volume.current?.setData(data.map((d) => ({ time: d.time as UTCTimestamp, value: d.volume, color: d.close >= d.open ? "rgba(61,220,151,0.35)" : "rgba(255,107,107,0.35)" })));
-        last.current = data.at(-1) ?? null;
-        if (first) chart.current?.timeScale().fitContent();
-        first = false;
-        setState("ready");
-      } catch {
-        if (!stop && first) setState("error");
+
+    const apply = (t: StreamTrade) => {
+      const bucket = Math.floor(t.ts / 1000 / step) * step;
+      if (last && bucket < last.time) return; // late trade for an already-closed bar
+      if (!last || bucket > last.time) {
+        last = { time: bucket, open: t.price, high: t.price, low: t.price, close: t.price, volume: t.qty };
+        bars++;
+      } else {
+        last = { ...last, high: Math.max(last.high, t.price), low: Math.min(last.low, t.price), close: t.price, volume: last.volume + t.qty };
       }
+      series.update(toBar(last));
+      vol.update(toVol(last));
     };
-    load();
-    const t = setInterval(load, 30_000);
+
+    const unsub = subscribeTrades(symbol, (trades) => {
+      if (!ready) return void pending.push(...trades);
+      for (const t of trades) apply(t);
+      if (bars > MAX_LIVE_BARS) {
+        // Keep long-running 1s charts bounded.
+        const data = series.data().slice(-MAX_LIVE_BARS);
+        series.setData(data as ReturnType<typeof toBar>[]);
+        bars = data.length;
+      }
+      setState((s) => (s === "waiting" ? "ready" : s));
+    });
+
+    (async () => {
+      try {
+        if (isVenueInterval(interval)) {
+          const hist = await api<Candle[]>(`/api/candles?symbol=${symbol}&interval=${interval}`);
+          if (stop) return;
+          series.setData(hist.map(toBar));
+          vol.setData(hist.map(toVol));
+          last = hist.at(-1) ?? null;
+          bars = hist.length;
+          chart.current?.timeScale().fitContent();
+        } else {
+          // Seed sub-minute charts with the venue's most recent prints.
+          const { trades } = await api<{ trades: StreamTrade[] }>(`/api/book?symbol=${symbol}`);
+          if (stop) return;
+          [...trades].sort((a, b) => a.ts - b.ts).forEach(apply);
+          chart.current?.timeScale().scrollToRealTime();
+        }
+        ready = true;
+        pending.sort((a, b) => a.ts - b.ts).forEach(apply);
+        pending.length = 0;
+        setState(bars > 0 ? "ready" : "waiting");
+      } catch {
+        if (!stop) setState("error");
+      }
+    })();
+
     return () => {
       stop = true;
-      clearInterval(t);
+      unsub();
     };
   }, [symbol, interval]);
 
-  // Live: roll the latest candle forward with the mark price between history refreshes.
-  useEffect(() => {
-    const l = last.current;
-    if (!mark || !l || !candles.current) return;
-    const step = SECONDS[interval];
-    const bucket = Math.floor(Date.now() / 1000 / step) * step;
-    const next = bucket > l.time ? { time: bucket, open: l.close, high: mark, low: mark, close: mark, volume: 0 } : { ...l, high: Math.max(l.high, mark), low: Math.min(l.low, mark), close: mark };
-    last.current = next;
-    candles.current.update({ time: next.time as UTCTimestamp, open: next.open, high: next.high, low: next.low, close: next.close });
-  }, [mark, interval]);
-
-  // Entry / TP / SL lines for the open position.
-  const linesKey = lines.map((l) => `${l.tone}:${l.price}`).join("|");
+  // Entry / TP / SL lines for this market's open trades.
+  const linesKey = lines.map((l) => `${l.tone}:${l.price}:${l.title}`).join("|");
   useEffect(() => {
     const s = candles.current;
     if (!s) return;
@@ -107,8 +149,8 @@ export function PriceChart({ symbol, interval, mark, decimals, lines }: { symbol
       s.createPriceLine({
         price: l.price,
         title: l.title,
-        color: l.tone === "entry" ? C.accent : l.tone === "tp" ? C.up : C.down,
-        lineStyle: l.tone === "entry" ? LineStyle.Solid : LineStyle.Dashed,
+        color: l.tone === "entry-long" || l.tone === "tp" ? C.up : l.tone === "entry-short" || l.tone === "sl" ? C.down : C.accent,
+        lineStyle: l.tone.startsWith("entry") ? LineStyle.Solid : LineStyle.Dashed,
         lineWidth: 1,
         axisLabelVisible: true,
       }),
@@ -120,7 +162,9 @@ export function PriceChart({ symbol, interval, mark, decimals, lines }: { symbol
     <div className="relative h-full min-h-[320px] w-full">
       <div ref={el} className="absolute inset-0" />
       {state !== "ready" && (
-        <div className="absolute inset-0 grid place-items-center text-sm text-muted">{state === "loading" ? "Loading chart…" : "Chart data unavailable"}</div>
+        <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-muted">
+          {state === "loading" ? "Loading chart…" : state === "waiting" ? "Waiting for the first trade…" : "Chart data unavailable"}
+        </div>
       )}
     </div>
   );

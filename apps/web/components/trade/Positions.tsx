@@ -1,79 +1,141 @@
 "use client";
 
 import { useState } from "react";
-import type { AccountView, FillRow } from "@/lib/server/engine";
+import { unrealized } from "@tenor/rules";
+import type { AccountView, ClosedTrade, TicketView } from "@/lib/server/engine";
 import { MARKET_BY_SYMBOL, displayPair, formatPrice } from "@/lib/markets";
 import { api } from "@/lib/client";
 import { signedUsd, usd } from "@/lib/format";
 import { cx } from "../ui";
 
-const REASONS: Record<string, string> = { order: "Order", tp: "Take profit", sl: "Stop loss", breach: "Breach close", pass: "Target close" };
+const REASONS: Record<string, string> = { close: "Closed", tp: "Take profit", sl: "Stop loss", breach: "Breach", pass: "Target reached" };
+const fmt = (n: number | null | undefined, market: string) => {
+  const m = MARKET_BY_SYMBOL[market];
+  return n == null ? "—" : m ? formatPrice(n, m) : String(n);
+};
+const age = (ts: number) => {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;
+};
 
-export function Positions({ account, fills, onChange }: { account: AccountView | null; fills: FillRow[]; onChange: (a: AccountView) => void }) {
-  const [tab, setTab] = useState<"positions" | "history">("positions");
-  const [closing, setClosing] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const positions = account?.positions ?? [];
+function TpSlEditor({ t, onSave, onCancel }: { t: TicketView; onSave: (tp: string, sl: string) => Promise<void>; onCancel: () => void }) {
+  const [tp, setTp] = useState(t.tp ? String(t.tp) : "");
+  const [sl, setSl] = useState(t.sl ? String(t.sl) : "");
+  const [busy, setBusy] = useState(false);
+  const f = "num h-7 w-24 rounded-lg border border-line bg-bg px-2 text-xs outline-none focus:border-accent";
+  return (
+    <form
+      className="flex items-center justify-end gap-1.5"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        await onSave(tp, sl);
+        setBusy(false);
+      }}
+    >
+      <input aria-label="Take profit" placeholder="TP" inputMode="decimal" value={tp} onChange={(e) => setTp(e.target.value.replace(/[^\d.]/g, ""))} className={f} autoFocus />
+      <input aria-label="Stop loss" placeholder="SL" inputMode="decimal" value={sl} onChange={(e) => setSl(e.target.value.replace(/[^\d.]/g, ""))} className={f} />
+      <button type="submit" disabled={busy} className="rounded-full bg-fg px-2.5 py-1 text-bg disabled:opacity-50">{busy ? "…" : "Save"}</button>
+      <button type="button" onClick={onCancel} className="px-1 text-muted hover:text-fg">✕</button>
+    </form>
+  );
+}
 
-  async function close(market: string) {
-    if (!account) return;
-    setClosing(market);
-    setError(null);
+export function Positions({ account, history, marks, onChange }: { account: AccountView | null; history: ClosedTrade[]; marks: Record<string, number>; onChange: (a: AccountView) => void }) {
+  const [tab, setTab] = useState<"open" | "history">("open");
+  const [busy, setBusy] = useState<number | "all" | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const tickets = account?.positions ?? [];
+  const canTrade = account?.status === "active";
+
+  async function run(key: number | "all", fn: () => Promise<{ account: AccountView }>) {
+    setBusy(key);
+    setErrors((e) => ({ ...e, [key]: "" }));
     try {
-      const res = await api<{ account: AccountView }>("/api/orders/close", { body: { accountId: account.id, market } });
-      onChange(res.account);
+      onChange((await fn()).account);
+      if (key === editing) setEditing(null);
     } catch (e) {
-      setError((e as Error).message);
+      setErrors((x) => ({ ...x, [key]: (e as Error).message }));
     } finally {
-      setClosing(null);
+      setBusy(null);
     }
   }
+  const close = (ticketId: number | "all") => run(ticketId, () => api("/api/orders/close", { body: { accountId: account!.id, ticketId } }));
+  const save = (t: TicketView, tp: string, sl: string) => run(t.id, () => api("/api/orders/update", { body: { accountId: account!.id, ticketId: t.id, tp, sl } }));
+
+  const live = tickets.map((t) => {
+    const mark = marks[t.market] ?? t.mark;
+    return { ...t, mark, upnl: unrealized(t, mark), notional: Math.abs(t.qty) * mark };
+  });
+  const totalUpnl = live.reduce((s, t) => s + t.upnl, 0);
 
   return (
     <div>
       <div className="flex items-center border-b border-line text-sm">
-        {(["positions", "history"] as const).map((t) => (
+        {(["open", "history"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={cx("px-4 py-2.5", tab === t ? "border-b-2 border-fg font-medium" : "text-muted hover:text-fg")}>
-            {t === "positions" ? `Positions (${positions.length})` : "Trade history"}
+            {t === "open" ? `Open trades (${tickets.length})` : `Trade history (${history.length})`}
           </button>
         ))}
-        {error && <span role="alert" className="ml-auto pr-4 text-xs text-down">{error}</span>}
+        {tab === "open" && tickets.length > 0 && (
+          <div className="ml-auto flex items-center gap-3 pr-3 text-xs">
+            <span className={cx("num", totalUpnl >= 0 ? "text-up" : "text-down")}>{signedUsd(totalUpnl)}</span>
+            <button onClick={() => close("all")} disabled={busy !== null || !canTrade} className="rounded-full border border-line px-3 py-1 hover:border-down hover:text-down disabled:opacity-40">
+              {busy === "all" ? "Closing…" : "Close all"}
+            </button>
+          </div>
+        )}
       </div>
+      {errors.all && <p role="alert" className="border-b border-line bg-down/10 px-4 py-2 text-xs text-down">{errors.all}</p>}
 
-      {tab === "positions" ? (
-        positions.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted">No open positions</p>
+      {tab === "open" ? (
+        live.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted">No open trades</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-xs">
+            <table className="w-full min-w-[860px] text-xs">
               <thead className="text-left text-faint">
                 <tr>
-                  {["Market", "Size", "Value", "Entry", "Mark", "Unrealized P&L", "TP / SL", ""].map((h, i) => (
-                    <th key={i} className={cx("px-4 py-2.5 font-normal", i > 0 && i < 7 && "text-right")}>{h}</th>
+                  {["Trade", "Market", "Size", "Value", "Entry", "Mark", "P&L", "TP / SL", ""].map((h, i) => (
+                    <th key={i} className={cx("px-3 py-2.5 font-normal", i >= 2 && i <= 7 && "text-right")}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {positions.map((p) => {
-                  const m = MARKET_BY_SYMBOL[p.market];
+                {live.map((t) => {
+                  const m = MARKET_BY_SYMBOL[t.market];
+                  const pct = (t.upnl / (Math.abs(t.qty) * t.entry)) * 100;
                   return (
-                    <tr key={p.market}>
-                      <td className="px-4 py-3">
-                        <span className="font-medium">{m ? displayPair(m) : p.market}</span>{" "}
-                        <span className={p.qty > 0 ? "text-up" : "text-down"}>{p.qty > 0 ? "Long" : "Short"}</span>
+                    <tr key={t.id} className="align-middle">
+                      <td className="num px-3 py-3 text-muted">
+                        #{t.id} <span className="text-faint">· {age(t.openedAt)}</span>
                       </td>
-                      <td className="num px-4 py-3 text-right">{Math.abs(p.qty).toPrecision(4)} {m?.base}</td>
-                      <td className="num px-4 py-3 text-right">{usd(p.notional, true)}</td>
-                      <td className="num px-4 py-3 text-right">{m ? formatPrice(p.entry, m) : p.entry}</td>
-                      <td className="num px-4 py-3 text-right">{m ? formatPrice(p.mark, m) : p.mark}</td>
-                      <td className={cx("num px-4 py-3 text-right", p.upnl >= 0 ? "text-up" : "text-down")}>{signedUsd(p.upnl)}</td>
-                      <td className="num px-4 py-3 text-right text-muted">
-                        {p.tp && m ? formatPrice(p.tp, m) : "—"} / {p.sl && m ? formatPrice(p.sl, m) : "—"}
+                      <td className="px-3 py-3">
+                        <span className="font-medium">{m ? displayPair(m) : t.market}</span>{" "}
+                        <span className={t.qty > 0 ? "text-up" : "text-down"}>{t.qty > 0 ? "Long" : "Short"}</span>
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={() => close(p.market)} disabled={closing !== null || account?.status !== "active"} className="rounded-full border border-line px-3 py-1 hover:border-line-strong disabled:opacity-40">
-                          {closing === p.market ? "Closing…" : "Close"}
+                      <td className="num px-3 py-3 text-right">{Math.abs(t.qty).toPrecision(4)} {m?.base}</td>
+                      <td className="num px-3 py-3 text-right">{usd(t.notional, true)}</td>
+                      <td className="num px-3 py-3 text-right">{fmt(t.entry, t.market)}</td>
+                      <td className="num px-3 py-3 text-right">{fmt(t.mark, t.market)}</td>
+                      <td className={cx("num px-3 py-3 text-right", t.upnl >= 0 ? "text-up" : "text-down")}>
+                        {signedUsd(t.upnl)} <span className="text-[10px] opacity-70">{pct >= 0 ? "+" : ""}{pct.toFixed(2)}%</span>
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        {editing === t.id ? (
+                          <TpSlEditor t={t} onSave={(tp, sl) => save(t, tp, sl)} onCancel={() => setEditing(null)} />
+                        ) : (
+                          <button onClick={() => setEditing(t.id)} disabled={!canTrade} className="num rounded-lg px-2 py-1 text-muted hover:bg-white/5 hover:text-fg disabled:opacity-40" title="Edit TP / SL">
+                            <span className={t.tp ? "text-up" : ""}>{fmt(t.tp, t.market)}</span> / <span className={t.sl ? "text-down" : ""}>{fmt(t.sl, t.market)}</span> ✎
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <button onClick={() => close(t.id)} disabled={busy !== null || !canTrade} className="rounded-full border border-line px-3 py-1 hover:border-line-strong disabled:opacity-40">
+                          {busy === t.id && editing !== t.id ? "Closing…" : "Close"}
                         </button>
+                        {errors[t.id] && <div role="alert" className="mt-1 max-w-56 text-right text-[11px] text-down">{errors[t.id]}</div>}
                       </td>
                     </tr>
                   );
@@ -82,33 +144,35 @@ export function Positions({ account, fills, onChange }: { account: AccountView |
             </table>
           </div>
         )
-      ) : fills.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted">No trades yet</p>
+      ) : history.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted">No closed trades yet</p>
       ) : (
-        <div className="max-h-72 overflow-auto">
-          <table className="w-full min-w-[640px] text-xs">
+        <div className="max-h-80 overflow-auto">
+          <table className="w-full min-w-[900px] text-xs">
             <thead className="sticky top-0 bg-surface text-left text-faint">
               <tr>
-                {["Time", "Market", "Side", "Size", "Price", "Fee", "Realized P&L", "Type"].map((h, i) => (
-                  <th key={h} className={cx("px-4 py-2.5 font-normal", i >= 3 && i <= 6 && "text-right")}>{h}</th>
+                {["Trade", "Market", "Size", "Entry", "Exit", "P&L", "Fees", "Net", "Duration", "Closed by"].map((h, i) => (
+                  <th key={h} className={cx("px-3 py-2.5 font-normal", i >= 2 && i <= 8 && "text-right")}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {fills.map((f) => {
-                const m = MARKET_BY_SYMBOL[f.market];
+              {history.map((h, i) => {
+                const m = MARKET_BY_SYMBOL[h.market];
                 return (
-                  <tr key={f.id}>
-                    <td className="num px-4 py-2.5 text-muted">{new Date(f.ts).toLocaleString("en-GB", { hour12: false })}</td>
-                    <td className="px-4 py-2.5">{m ? displayPair(m) : f.market}</td>
-                    <td className={cx("px-4 py-2.5", f.side === "buy" ? "text-up" : "text-down")}>{f.side === "buy" ? "Buy" : "Sell"}</td>
-                    <td className="num px-4 py-2.5 text-right">{f.qty.toPrecision(4)}</td>
-                    <td className="num px-4 py-2.5 text-right">{m ? formatPrice(f.price, m) : f.price}</td>
-                    <td className="num px-4 py-2.5 text-right text-muted">{usd(f.fee, true)}</td>
-                    <td className={cx("num px-4 py-2.5 text-right", f.realized_pnl > 0 ? "text-up" : f.realized_pnl < 0 ? "text-down" : "text-muted")}>
-                      {f.realized_pnl === 0 ? "—" : signedUsd(f.realized_pnl)}
+                  <tr key={`${h.ticketId ?? "x"}-${h.closedAt}-${i}`}>
+                    <td className="num px-3 py-2.5 text-muted">{h.ticketId ? `#${h.ticketId}` : "—"}</td>
+                    <td className="px-3 py-2.5">
+                      {m ? displayPair(m) : h.market} <span className={h.side === "long" ? "text-up" : "text-down"}>{h.side === "long" ? "Long" : "Short"}</span>
                     </td>
-                    <td className="px-4 py-2.5 text-muted">{REASONS[f.reason] ?? f.reason}</td>
+                    <td className="num px-3 py-2.5 text-right">{h.qty.toPrecision(4)}</td>
+                    <td className="num px-3 py-2.5 text-right">{fmt(h.entry, h.market)}</td>
+                    <td className="num px-3 py-2.5 text-right">{fmt(h.exit, h.market)}</td>
+                    <td className={cx("num px-3 py-2.5 text-right", h.pnl >= 0 ? "text-up" : "text-down")}>{signedUsd(h.pnl)}</td>
+                    <td className="num px-3 py-2.5 text-right text-muted">−{usd(h.fees, true)}</td>
+                    <td className={cx("num px-3 py-2.5 text-right font-medium", h.net >= 0 ? "text-up" : "text-down")}>{signedUsd(h.net)}</td>
+                    <td className="num px-3 py-2.5 text-right text-muted">{h.openedAt ? duration(h.closedAt - h.openedAt) : "—"}</td>
+                    <td className="px-3 py-2.5 text-muted">{REASONS[h.reason] ?? h.reason}</td>
                   </tr>
                 );
               })}
@@ -118,4 +182,12 @@ export function Positions({ account, fills, onChange }: { account: AccountView |
       )}
     </div>
   );
+}
+
+function duration(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }

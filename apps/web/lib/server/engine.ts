@@ -1,6 +1,5 @@
 import "server-only";
 import {
-  applyFill,
   evaluate,
   forcedClosePrice,
   parseProductId,
@@ -14,13 +13,15 @@ import {
   type Evaluation,
   type Side,
 } from "@tenor/rules";
-import { MARKET_BY_SYMBOL } from "@/lib/markets";
+import { MARKET_BY_SYMBOL, type OrderBook } from "@/lib/markets";
 import { db, isUniqueViolation, newId, tx, utcDayKey, type Q } from "./db";
 import { getMarkets, getOrderBook, MAX_PRICE_AGE_MS, type MarketSnapshot } from "./venue";
 
 // Evaluation engine (blueprint §3.4). Server-authoritative: the client never computes fills or breaches.
-// Every read-modify-write runs in a transaction that locks the account row (SELECT … FOR UPDATE),
-// so concurrent requests on different servers can't double-apply a fill or a breach.
+//
+// Hedging mode: every order opens its own ticket with its own entry, P&L, TP/SL and close.
+// Every read-modify-write locks the account row (SELECT … FOR UPDATE), so concurrent requests
+// on different servers can't double-apply a fill or a breach.
 
 export interface AccountRow {
   id: string;
@@ -39,26 +40,32 @@ export interface AccountRow {
   ended_at: number | null;
 }
 
-export interface PositionRow {
+export interface TicketRow {
+  id: number;
   account_id: string;
   market: string;
-  qty: number;
+  qty: number; // signed: + long, − short
   entry: number;
   tp: number | null;
   sl: number | null;
+  open_fee: number;
   opened_at: number;
 }
 
-export interface FillRow {
-  id: number;
+/** One closed trade with its full P&L. */
+export interface ClosedTrade {
+  ticketId: number | null;
   market: string;
-  side: Side;
+  side: "long" | "short";
   qty: number;
-  price: number;
-  fee: number;
-  realized_pnl: number;
-  reason: string;
-  ts: number;
+  entry: number | null;
+  exit: number;
+  pnl: number; // gross
+  fees: number; // open + close
+  net: number;
+  openedAt: number | null;
+  closedAt: number;
+  reason: "close" | "tp" | "sl" | "breach" | "pass" | string;
 }
 
 export class TradeError extends Error {
@@ -70,94 +77,106 @@ export class TradeError extends Error {
 }
 
 const MIN_ORDER_USD = 10;
+const MAX_OPEN_TICKETS = 50;
 
 const lockAccount = (t: Q, id: string) => t.one<AccountRow>("SELECT * FROM accounts WHERE id = $1 FOR UPDATE", [id]);
 const getAccount = (q: Q, id: string) => q.one<AccountRow>("SELECT * FROM accounts WHERE id = $1", [id]);
-const getPositions = (q: Q, id: string) => q.all<PositionRow>("SELECT * FROM positions WHERE account_id = $1 ORDER BY opened_at", [id]);
+const getTickets = (q: Q, id: string) => q.all<TicketRow>("SELECT * FROM tickets WHERE account_id = $1 ORDER BY opened_at, id", [id]);
 const setBalance = (t: Q, a: AccountRow) => t.run("UPDATE accounts SET balance = $1 WHERE id = $2", [a.balance, a.id]);
-const insertFill = (t: Q, a: AccountRow, market: string, side: Side, qty: number, price: number, fee: number, realized: number, reason: string) =>
-  t.run("INSERT INTO fills (account_id, market, side, qty, price, fee, realized_pnl, reason, ts) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [
-    a.id,
-    market,
-    side,
-    qty,
-    price,
-    fee,
-    realized,
-    reason,
-    Date.now(),
-  ]);
 
 // ── Marking ────────────────────────────────────────────────────────────────
 
-function freshMarks(snap: MarketSnapshot | null): Record<string, number> | null {
+type Marks = Record<string, number>;
+
+function freshMarks(snap: MarketSnapshot | null): Marks | null {
   if (!snap || Date.now() - snap.at > MAX_PRICE_AGE_MS) return null;
   return Object.fromEntries(Object.values(snap.stats).filter((s) => s.mark > 0).map((s) => [s.symbol, s.mark]));
 }
 
-function equityOf(a: AccountRow, positions: PositionRow[], marks: Record<string, number>) {
-  return a.balance + positions.reduce((sum, p) => sum + unrealized(p, marks[p.market] ?? p.entry), 0);
-}
+const equityOf = (a: AccountRow, tickets: TicketRow[], marks: Marks) => a.balance + tickets.reduce((s, k) => s + unrealized(k, marks[k.market] ?? k.entry), 0);
 
-/** Close a position at mark with modelled slippage (TP/SL, breach, pass). Runs inside a transaction. */
-async function forceClose(t: Q, a: AccountRow, p: PositionRow, mark: number, reason: string) {
-  const price = forcedClosePrice(p, mark);
-  const qty = Math.abs(p.qty);
-  const side: Side = p.qty > 0 ? "sell" : "buy";
-  const { realized } = applyFill(p, side, qty, price);
+/** Record a ticket's closing fill, book the P&L and delete the ticket. Runs inside a transaction. */
+async function closeTicketAt(t: Q, a: AccountRow, k: TicketRow, price: number, reason: string) {
+  const qty = Math.abs(k.qty);
+  const side: Side = k.qty > 0 ? "sell" : "buy";
+  const realized = unrealized(k, price);
   const fee = qty * price * TAKER_FEE;
   a.balance += realized - fee;
   await setBalance(t, a);
-  await insertFill(t, a, p.market, side, qty, price, fee, realized, reason);
-  await t.run("DELETE FROM positions WHERE account_id = $1 AND market = $2", [a.id, p.market]);
+  await t.run(
+    `INSERT INTO fills (account_id, market, side, qty, price, fee, realized_pnl, reason, ts, ticket_id, entry, open_fee, opened_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [a.id, k.market, side, qty, price, fee, realized, reason, Date.now(), k.id, k.entry, k.open_fee, k.opened_at],
+  );
+  await t.run("DELETE FROM tickets WHERE id = $1", [k.id]);
+  return { qty, price, fee, realized };
 }
 
 /**
- * Bring an account up to date against current marks and enforce its rules.
+ * Enforce an account's rules against current marks, inside the caller's transaction (account row locked).
  * Order matters: TP/SL → daily rollover → breach → pass.
- * With stale or missing prices nothing is enforced (no breaches from bad data — blueprint §14.2).
+ * With a missing mark nothing is enforced (no breaches from bad data — blueprint §14.2).
  */
-async function settle(accountId: string, marks: Record<string, number> | null) {
+async function enforce(t: Q, a: AccountRow, marks: Marks) {
+  if (a.status !== "active") return;
+  let tickets = await getTickets(t, a.id);
+  if (tickets.some((k) => !(marks[k.market] > 0))) return;
+
+  for (const k of tickets) {
+    const hit = triggered(k, marks[k.market]);
+    if (!hit) continue;
+    // TP behaves like a limit: fills at its price. SL is a stop: fills at the worse of its price and
+    // the market (with slippage), so a gap through the stop isn't filled at a price that no longer exists.
+    const market = forcedClosePrice(k, marks[k.market]);
+    const price = hit === "tp" ? k.tp! : k.qty > 0 ? Math.min(k.sl!, market) : Math.max(k.sl!, market);
+    await closeTicketAt(t, a, k, price, hit);
+  }
+  tickets = await getTickets(t, a.id);
+
+  const equity = equityOf(a, tickets, marks);
+  const today = utcDayKey();
+  if (a.day_key !== today) {
+    await t.run("UPDATE accounts SET day_key = $1, day_start_equity = $2 WHERE id = $3", [today, equity, a.id]);
+    a.day_key = today;
+    a.day_start_equity = equity;
+  }
+
+  const product = parseProductId(a.product_id)!;
+  const ev = evaluate({ phase: "evaluation", initialBalance: a.size, dayStartEquity: a.day_start_equity, equity }, rulesFor(product, a.step));
+  if (ev.status === "breached") {
+    for (const k of tickets) await closeTicketAt(t, a, k, forcedClosePrice(k, marks[k.market]), "breach");
+    a.status = "breached";
+    a.breach_reason = ev.reason ?? "rules";
+    a.ended_at = Date.now();
+    await t.run("UPDATE accounts SET status = 'breached', breach_reason = $1, ended_at = $2 WHERE id = $3", [a.breach_reason, a.ended_at, a.id]);
+  } else if (ev.status === "passed") {
+    for (const k of tickets) await closeTicketAt(t, a, k, forcedClosePrice(k, marks[k.market]), "pass");
+    if (product.steps === 2 && a.step === 1) {
+      a.step = 2;
+      a.balance = a.size;
+      a.day_key = today;
+      a.day_start_equity = a.size;
+      await t.run("UPDATE accounts SET step = 2, balance = size, day_key = $1, day_start_equity = size WHERE id = $2", [today, a.id]);
+    } else {
+      a.status = "passed";
+      a.ended_at = Date.now();
+      await t.run("UPDATE accounts SET status = 'passed', ended_at = $1 WHERE id = $2", [a.ended_at, a.id]);
+    }
+  }
+}
+
+async function settle(accountId: string, marks: Marks | null) {
   if (!marks) return;
   await tx(async (t) => {
     const a = await lockAccount(t, accountId);
-    if (!a || a.status !== "active") return;
-    let positions = await getPositions(t, a.id);
-    if (positions.some((p) => !(marks[p.market] > 0))) return;
-
-    for (const p of positions) {
-      const hit = triggered(p, marks[p.market]);
-      if (hit) await forceClose(t, a, p, marks[p.market], hit);
-    }
-    positions = await getPositions(t, a.id);
-
-    const equity = equityOf(a, positions, marks);
-    const today = utcDayKey();
-    if (a.day_key !== today) {
-      await t.run("UPDATE accounts SET day_key = $1, day_start_equity = $2 WHERE id = $3", [today, equity, a.id]);
-      a.day_key = today;
-      a.day_start_equity = equity;
-    }
-
-    const product = parseProductId(a.product_id)!;
-    const ev = evaluate({ phase: "evaluation", initialBalance: a.size, dayStartEquity: a.day_start_equity, equity }, rulesFor(product, a.step));
-    if (ev.status === "breached") {
-      for (const p of positions) await forceClose(t, a, p, marks[p.market], "breach");
-      await t.run("UPDATE accounts SET status = 'breached', breach_reason = $1, ended_at = $2 WHERE id = $3", [ev.reason ?? "rules", Date.now(), a.id]);
-    } else if (ev.status === "passed") {
-      for (const p of positions) await forceClose(t, a, p, marks[p.market], "pass");
-      if (product.steps === 2 && a.step === 1) {
-        await t.run("UPDATE accounts SET step = step + 1, balance = size, day_key = $1, day_start_equity = size WHERE id = $2", [today, a.id]);
-      } else {
-        await t.run("UPDATE accounts SET status = 'passed', ended_at = $1 WHERE id = $2", [Date.now(), a.id]);
-      }
-    }
+    if (a) await enforce(t, a, marks);
   });
 }
 
 // ── Views ──────────────────────────────────────────────────────────────────
 
-export interface PositionView {
+export interface TicketView {
+  id: number;
   market: string;
   qty: number;
   entry: number;
@@ -166,6 +185,7 @@ export interface PositionView {
   upnl: number;
   tp: number | null;
   sl: number | null;
+  openFee: number;
   openedAt: number;
 }
 
@@ -183,20 +203,21 @@ export interface AccountView {
   equity: number;
   upnl: number;
   todayPnl: number;
+  dayStartEquity: number;
   rules: ReturnType<typeof rulesFor>;
   objectives: Evaluation;
-  positions: PositionView[];
+  positions: TicketView[];
   createdAt: number;
   endedAt: number | null;
   priceStale: boolean;
 }
 
-async function toView(a: AccountRow, marks: Record<string, number> | null): Promise<AccountView> {
+function toView(a: AccountRow, tickets: TicketRow[], marks: Marks | null): AccountView {
   const product = parseProductId(a.product_id)!;
   const rules = rulesFor(product, a.step);
-  const positions = (await getPositions(db, a.id)).map((p) => {
-    const mark = marks?.[p.market] ?? p.entry;
-    return { market: p.market, qty: p.qty, entry: p.entry, mark, notional: Math.abs(p.qty) * mark, upnl: unrealized(p, mark), tp: p.tp, sl: p.sl, openedAt: p.opened_at };
+  const positions = tickets.map((k) => {
+    const mark = marks?.[k.market] ?? k.entry;
+    return { id: k.id, market: k.market, qty: k.qty, entry: k.entry, mark, notional: Math.abs(k.qty) * mark, upnl: unrealized(k, mark), tp: k.tp, sl: k.sl, openFee: k.open_fee, openedAt: k.opened_at };
   });
   const upnl = positions.reduce((s, p) => s + p.upnl, 0);
   const equity = a.balance + upnl;
@@ -214,6 +235,7 @@ async function toView(a: AccountRow, marks: Record<string, number> | null): Prom
     equity,
     upnl,
     todayPnl: a.status === "active" ? equity - a.day_start_equity : 0,
+    dayStartEquity: a.day_start_equity,
     rules,
     objectives: evaluate({ phase: "evaluation", initialBalance: a.size, dayStartEquity: a.day_start_equity, equity }, rules),
     positions,
@@ -239,22 +261,63 @@ async function owned(userId: string, accountId: string) {
 
 const byUser = (userId: string) => db.all<AccountRow>("SELECT * FROM accounts WHERE user_id = $1 ORDER BY created_at DESC", [userId]);
 
+async function viewOf(accountId: string, marks: Marks | null) {
+  const [a, tickets] = await Promise.all([getAccount(db, accountId), getTickets(db, accountId)]);
+  return toView(a!, tickets, marks);
+}
+
 export async function listAccounts(userId: string): Promise<AccountView[]> {
-  const marks = freshMarks(await snapshot());
-  for (const r of await byUser(userId)) if (r.status === "active") await settle(r.id, marks);
-  return Promise.all((await byUser(userId)).map((r) => toView(r, marks)));
+  const [rows, snap] = await Promise.all([byUser(userId), snapshot()]);
+  const marks = freshMarks(snap);
+  await Promise.all(rows.filter((r) => r.status === "active").map((r) => settle(r.id, marks)));
+  return Promise.all((await byUser(userId)).map((r) => viewOf(r.id, marks)));
 }
 
 export async function getAccountView(userId: string, accountId: string) {
-  await owned(userId, accountId);
-  const marks = freshMarks(await snapshot());
+  const [, snap] = await Promise.all([owned(userId, accountId), snapshot()]);
+  const marks = freshMarks(snap);
   await settle(accountId, marks);
-  return toView((await getAccount(db, accountId))!, marks);
+  return viewOf(accountId, marks);
 }
 
-export async function getFills(userId: string, accountId: string) {
+/** Closed trades, newest first — one row per trade with gross, fees and net P&L. */
+export async function getTradeHistory(userId: string, accountId: string): Promise<ClosedTrade[]> {
   await owned(userId, accountId);
-  return db.all<FillRow>("SELECT id, market, side, qty, price, fee, realized_pnl, reason, ts FROM fills WHERE account_id = $1 ORDER BY ts DESC, id DESC LIMIT 100", [accountId]);
+  const rows = await db.all<{
+    ticket_id: number | null;
+    market: string;
+    side: Side;
+    qty: number;
+    price: number;
+    fee: number;
+    realized_pnl: number;
+    reason: string;
+    ts: number;
+    entry: number | null;
+    open_fee: number | null;
+    opened_at: number | null;
+  }>(
+    `SELECT ticket_id, market, side, qty, price, fee, realized_pnl, reason, ts, entry, open_fee, opened_at
+     FROM fills WHERE account_id = $1 AND reason <> 'open' AND reason <> 'order' ORDER BY ts DESC, id DESC LIMIT 200`,
+    [accountId],
+  );
+  return rows.map((r) => {
+    const fees = r.fee + (r.open_fee ?? 0);
+    return {
+      ticketId: r.ticket_id,
+      market: r.market,
+      side: r.side === "sell" ? "long" : "short", // closing a long is a sell
+      qty: r.qty,
+      entry: r.entry,
+      exit: r.price,
+      pnl: r.realized_pnl,
+      fees,
+      net: r.realized_pnl - fees,
+      openedAt: r.opened_at,
+      closedAt: r.ts,
+      reason: r.reason,
+    };
+  });
 }
 
 /** Risk sweep over every active account — called by /api/cron/risk on a schedule. */
@@ -298,93 +361,121 @@ export interface OrderInput {
   market: string;
   side: Side;
   notional: number; // USD
-  reduceOnly?: boolean;
   tp?: number | null;
   sl?: number | null;
 }
 
+function checkTpSl(dir: number, mark: number, tp: number | null | undefined, sl: number | null | undefined) {
+  if (tp != null && !(tp > 0)) throw new TradeError("Take profit must be a positive price");
+  if (sl != null && !(sl > 0)) throw new TradeError("Stop loss must be a positive price");
+  if (tp != null && (dir > 0 ? tp <= mark : tp >= mark)) throw new TradeError(`Take profit must be ${dir > 0 ? "above" : "below"} the current price`);
+  if (sl != null && (dir > 0 ? sl >= mark : sl <= mark)) throw new TradeError(`Stop loss must be ${dir > 0 ? "below" : "above"} the current price`);
+}
+
+/** Inactive-account errors are raised after commit so enforcement that just happened isn't rolled back. */
+function inactiveError(a: AccountRow) {
+  return new TradeError(a.status === "breached" ? "This account was breached" : "This evaluation is complete");
+}
+
+/** Open a new ticket. One transaction: enforce → validate → fill → enforce. */
 export async function placeOrder(userId: string, accountId: string, input: OrderInput) {
-  await owned(userId, accountId);
   const m = MARKET_BY_SYMBOL[input.market];
   if (!m) throw new TradeError("Unknown market");
   if (input.side !== "buy" && input.side !== "sell") throw new TradeError("Invalid side");
   if (!Number.isFinite(input.notional) || input.notional < MIN_ORDER_USD) throw new TradeError(`Minimum order is $${MIN_ORDER_USD}`);
 
-  const [snap, book] = await Promise.all([snapshot(), getOrderBook(m.symbol).catch(() => null)]);
+  // Ownership check and both venue reads in parallel — this is the latency-critical path.
+  const [, snap, book] = await Promise.all([owned(userId, accountId), snapshot(), getOrderBook(m.symbol).catch(() => null)]);
   const marks = freshMarks(snap);
   const stats = snap?.stats[m.symbol];
   if (!marks || !stats || !book) throw new TradeError("Live prices are unavailable right now — try again in a moment", 503);
-  if (!stats.open) throw new TradeError(`${m.name} is closed right now`);
+  if (!stats.open) throw new TradeError(`${m.name} is closed right now — you can still close open trades`);
+  const dir = input.side === "buy" ? 1 : -1;
+  checkTpSl(dir, stats.mark, input.tp, input.sl);
 
-  await settle(accountId, marks);
-
-  const result = await tx(async (t) => {
+  const out = await tx(async (t) => {
     const a = (await lockAccount(t, accountId))!;
-    if (a.status !== "active") throw new TradeError(a.status === "breached" ? "This account was breached" : "This evaluation is complete");
-    const positions = await getPositions(t, a.id);
-    const current = positions.find((p) => p.market === m.symbol);
-    const levels = input.side === "buy" ? book.asks : book.bids;
+    await enforce(t, a, marks);
+    if (a.status !== "active") return { inactive: a };
 
-    let fill;
-    if (input.reduceOnly) {
-      const opposite = current && (input.side === "sell" ? current.qty > 0 : current.qty < 0);
-      if (!current || !opposite) throw new TradeError("Reduce-only order would open or increase a position");
-      fill = walkBookQty(levels, Math.min(Math.abs(current.qty), input.notional / stats.mark));
-    } else {
-      fill = walkBook(levels, input.notional);
-    }
+    const tickets = await getTickets(t, a.id);
+    if (tickets.length >= MAX_OPEN_TICKETS) throw new TradeError(`Maximum ${MAX_OPEN_TICKETS} open trades per account`);
+    const fill = walkBook(input.side === "buy" ? book.asks : book.bids, input.notional);
     if (!fill) throw new TradeError("Order is larger than the venue's visible order book");
 
-    const before = current ?? { qty: 0, entry: 0 };
-    const { pos, realized } = applyFill(before, input.side, fill.qty, fill.avgPrice);
     const fee = fill.notional * TAKER_FEE;
-    const equity = equityOf(a, positions, marks) - fee;
-
-    const growing = Math.abs(pos.qty) > Math.abs(before.qty) + 1e-12;
+    const equity = equityOf(a, tickets, marks) - fee;
+    // Gross exposure per market (hedged trades count both ways — conservative).
+    const gross = tickets.filter((k) => k.market === m.symbol).reduce((s, k) => s + Math.abs(k.qty) * stats.mark, 0) + fill.qty * stats.mark;
     const maxNotional = Math.max(0, equity) * m.maxLeverage;
-    if (growing && Math.abs(pos.qty) * stats.mark > maxNotional) {
-      throw new TradeError(`Max leverage on ${m.assetClass.toLowerCase()} is ${m.maxLeverage}× — position limit is $${Math.floor(maxNotional).toLocaleString()}`);
+    if (gross > maxNotional) {
+      throw new TradeError(`Max leverage on ${m.assetClass.toLowerCase()} is ${m.maxLeverage}× — you can add up to $${Math.max(0, Math.floor(maxNotional - (gross - fill.qty * stats.mark))).toLocaleString()}`);
     }
 
-    // TP/SL must sit on the profitable / losing side of mark for the resulting direction.
-    const dir = Math.sign(pos.qty);
-    const flipped = before.qty !== 0 && dir !== Math.sign(before.qty);
-    const tp = input.tp ?? (flipped ? null : (current?.tp ?? null));
-    const sl = input.sl ?? (flipped ? null : (current?.sl ?? null));
-    if (dir !== 0) {
-      if (tp != null && (dir > 0 ? tp <= stats.mark : tp >= stats.mark)) throw new TradeError("Take profit must be beyond the current price");
-      if (sl != null && (dir > 0 ? sl >= stats.mark : sl <= stats.mark)) throw new TradeError("Stop loss must be on the losing side of the current price");
-    }
-
-    a.balance += realized - fee;
+    const now = Date.now();
+    const row = await t.one<{ id: number }>(
+      "INSERT INTO tickets (account_id, market, qty, entry, tp, sl, open_fee, opened_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+      [a.id, m.symbol, dir * fill.qty, fill.avgPrice, input.tp ?? null, input.sl ?? null, fee, now],
+    );
+    await t.run(
+      "INSERT INTO fills (account_id, market, side, qty, price, fee, realized_pnl, reason, ts, ticket_id) VALUES ($1, $2, $3, $4, $5, $6, 0, 'open', $7, $8)",
+      [a.id, m.symbol, input.side, fill.qty, fill.avgPrice, fee, now, row!.id],
+    );
+    a.balance -= fee;
     await setBalance(t, a);
-    if (Math.abs(pos.qty) < 1e-12) {
-      await t.run("DELETE FROM positions WHERE account_id = $1 AND market = $2", [a.id, m.symbol]);
-    } else {
-      await t.run(
-        `INSERT INTO positions (account_id, market, qty, entry, tp, sl, opened_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (account_id, market) DO UPDATE SET qty = excluded.qty, entry = excluded.entry, tp = excluded.tp, sl = excluded.sl`,
-        [a.id, m.symbol, pos.qty, pos.entry, tp, sl, current && !flipped ? current.opened_at : Date.now()],
-      );
-    }
-    await insertFill(t, a, m.symbol, input.side, fill.qty, fill.avgPrice, fee, realized, "order");
-    return { qty: fill.qty, price: fill.avgPrice, fee, realized };
+    await enforce(t, a, marks); // the fee alone can tip an account over a limit
+    return { fill: { ticketId: row!.id, qty: fill.qty, price: fill.avgPrice, fee }, view: toView(a, await getTickets(t, a.id), marks) };
   });
-
-  await settle(accountId, marks); // the fee alone can tip an account over a limit
-  return { fill: result, account: await toView((await getAccount(db, accountId))!, marks) };
+  if ("inactive" in out) throw inactiveError(out.inactive!);
+  return { fill: out.fill, account: out.view };
 }
 
-export async function closePosition(userId: string, accountId: string, market: string) {
-  await owned(userId, accountId);
-  const p = await db.one<PositionRow>("SELECT * FROM positions WHERE account_id = $1 AND market = $2", [accountId, market]);
-  if (!p) throw new TradeError("No open position in this market");
-  const snap = await snapshot();
-  const mark = snap?.stats[market]?.mark ?? 0;
-  return placeOrder(userId, accountId, {
-    market,
-    side: p.qty > 0 ? "sell" : "buy",
-    notional: Math.max(MIN_ORDER_USD, Math.abs(p.qty) * mark * 1.01), // reduce-only caps at position size
-    reduceOnly: true,
+/** Market-close one ticket (or all) against the real book. Allowed off-hours: reducing risk is never blocked. */
+export async function closeTickets(userId: string, accountId: string, ticketId: number | "all") {
+  const [, snap, open] = await Promise.all([owned(userId, accountId), snapshot(), getTickets(db, accountId)]);
+  const targets = ticketId === "all" ? open : open.filter((k) => k.id === ticketId);
+  if (targets.length === 0) throw new TradeError(ticketId === "all" ? "No open trades" : "This trade is already closed", 409);
+
+  const marks = freshMarks(snap);
+  if (!marks) throw new TradeError("Live prices are unavailable right now — try again in a moment", 503);
+  const markets = [...new Set(targets.map((k) => k.market))];
+  const books = new Map<string, OrderBook | null>(await Promise.all(markets.map(async (s) => [s, await getOrderBook(s).catch(() => null)] as const)));
+
+  const out = await tx(async (t) => {
+    const a = (await lockAccount(t, accountId))!;
+    if (a.status !== "active") return { inactive: a };
+    const ids = new Set(targets.map((k) => k.id));
+    const closes = [];
+    for (const k of (await getTickets(t, a.id)).filter((x) => ids.has(x.id))) {
+      const book = books.get(k.market);
+      const levels = k.qty > 0 ? book?.bids : book?.asks;
+      const fill = levels ? walkBookQty(levels, Math.abs(k.qty)) : null;
+      // No visible liquidity (e.g. venue maintenance): fall back to mark with modelled slippage rather than trap the trade.
+      const price = fill?.avgPrice ?? forcedClosePrice(k, marks[k.market] ?? k.entry);
+      closes.push({ ticketId: k.id, ...(await closeTicketAt(t, a, k, price, "close")) });
+    }
+    await enforce(t, a, marks);
+    return { closes, view: toView(a, await getTickets(t, a.id), marks) };
   });
+  if ("inactive" in out) throw inactiveError(out.inactive!);
+  return { closes: out.closes, account: out.view };
+}
+
+/** Set or clear TP/SL on an open ticket. */
+export async function updateTicket(userId: string, accountId: string, ticketId: number, tp: number | null, sl: number | null) {
+  const [, snap] = await Promise.all([owned(userId, accountId), snapshot()]);
+  const marks = freshMarks(snap);
+  const out = await tx(async (t) => {
+    const a = (await lockAccount(t, accountId))!;
+    if (a.status !== "active") return { inactive: a };
+    const k = await t.one<TicketRow>("SELECT * FROM tickets WHERE id = $1 AND account_id = $2", [ticketId, accountId]);
+    if (!k) throw new TradeError("This trade is already closed", 409);
+    const mark = marks?.[k.market];
+    if (!mark) throw new TradeError("Live prices are unavailable right now — try again in a moment", 503);
+    checkTpSl(Math.sign(k.qty), mark, tp, sl);
+    await t.run("UPDATE tickets SET tp = $1, sl = $2 WHERE id = $3", [tp, sl, k.id]);
+    return { view: toView(a, await getTickets(t, a.id), marks) };
+  });
+  if ("inactive" in out) throw inactiveError(out.inactive!);
+  return { account: out.view };
 }

@@ -87,7 +87,7 @@ interface RawBook {
 }
 
 export function getOrderBook(symbol: string): Promise<OrderBook> {
-  return cached(`book:${symbol}`, 1_000, async () => {
+  return cached(`book:${symbol}`, 500, async () => {
     const raw = await get<RawBook>(`/info/markets/${encodeURIComponent(symbol)}/orderbook`);
     const map = (l: { price: string; qty: string }) => ({ price: num(l.price), qty: num(l.qty) });
     return {
