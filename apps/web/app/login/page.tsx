@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, googleConfigured } from "@/auth";
+import { LogoMark } from "@/components/Logo";
 import { signInWithGoogle } from "./actions";
 import { GoogleButton } from "./GoogleButton";
 
@@ -30,8 +31,9 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       </div>
 
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-4">
-        <Link href="/" className="font-display text-6xl tracking-tight drop-shadow-sm sm:text-7xl">
-          Tenor
+        <Link href="/" className="flex flex-col items-center gap-4" aria-label="Tenor home">
+          <LogoMark size={72} className="shadow-[0_12px_40px_-12px_rgb(40_0_120/0.6)] ring-1 ring-white/30" />
+          <span className="font-display text-6xl tracking-tight drop-shadow-sm sm:text-7xl">Tenor</span>
         </Link>
 
         <div className="mt-5 flex items-center gap-2">
