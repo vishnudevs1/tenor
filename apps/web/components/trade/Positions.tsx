@@ -8,7 +8,13 @@ import { api } from "@/lib/client";
 import { signedUsd, usd } from "@/lib/format";
 import { cx } from "../ui";
 
-const REASONS: Record<string, string> = { close: "Closed", tp: "Take profit", sl: "Stop loss", breach: "Breach", pass: "Target reached" };
+const REASONS: Record<string, string> = { close: "Closed", partial: "Partial close", tp: "Take profit", sl: "Stop loss", breach: "Breach", pass: "Target reached" };
+const CLOSE_SIZES = [
+  { label: "25%", f: 0.25 },
+  { label: "50%", f: 0.5 },
+  { label: "75%", f: 0.75 },
+  { label: "All", f: 1 },
+];
 const fmt = (n: number | null | undefined, market: string) => {
   const m = MARKET_BY_SYMBOL[market];
   return n == null ? "—" : m ? formatPrice(n, m) : String(n);
@@ -45,6 +51,7 @@ export function Positions({ account, history, marks, onChange }: { account: Acco
   const [tab, setTab] = useState<"open" | "history">("open");
   const [busy, setBusy] = useState<number | "all" | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
+  const [choosing, setChoosing] = useState<number | null>(null); // row whose close-size options are showing
   const [errors, setErrors] = useState<Record<string, string>>({});
   const tickets = account?.positions ?? [];
   const canTrade = account?.status === "active";
@@ -61,7 +68,10 @@ export function Positions({ account, history, marks, onChange }: { account: Acco
       setBusy(null);
     }
   }
-  const close = (ticketId: number | "all") => run(ticketId, () => api("/api/orders/close", { body: { accountId: account!.id, ticketId } }));
+  const close = (ticketId: number | "all", fraction = 1) => {
+    setChoosing(null);
+    return run(ticketId, () => api("/api/orders/close", { body: { accountId: account!.id, ticketId, fraction } }));
+  };
   const save = (t: TicketView, tp: string, sl: string) => run(t.id, () => api("/api/orders/update", { body: { accountId: account!.id, ticketId: t.id, tp, sl } }));
 
   const live = tickets.map((t) => {
@@ -94,7 +104,7 @@ export function Positions({ account, history, marks, onChange }: { account: Acco
           <p className="py-10 text-center text-sm text-muted">No open trades</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-xs">
+            <table className="w-full min-w-[960px] text-xs">
               <thead className="text-left text-faint">
                 <tr>
                   {["Trade", "Market", "Size", "Value", "Entry", "Mark", "P&L", "TP / SL", ""].map((h, i) => (
@@ -131,10 +141,27 @@ export function Positions({ account, history, marks, onChange }: { account: Acco
                           </button>
                         )}
                       </td>
-                      <td className="px-3 py-3 text-right">
-                        <button onClick={() => close(t.id)} disabled={busy !== null || !canTrade} className="rounded-full border border-line px-3 py-1 hover:border-line-strong disabled:opacity-40">
-                          {busy === t.id && editing !== t.id ? "Closing…" : "Close"}
-                        </button>
+                      <td className="whitespace-nowrap px-3 py-3 text-right">
+                        {busy === t.id && editing !== t.id ? (
+                          <span className="text-muted">Closing…</span>
+                        ) : choosing === t.id ? (
+                          <span role="group" aria-label={`Close trade #${t.id}`} className="inline-flex items-center gap-1">
+                            {CLOSE_SIZES.map((c) => (
+                              <button
+                                key={c.label}
+                                onClick={() => close(t.id, c.f)}
+                                className={cx("rounded-full border px-2.5 py-1", c.f === 1 ? "border-down/50 text-down hover:bg-down/10" : "border-line hover:border-line-strong")}
+                              >
+                                {c.label}
+                              </button>
+                            ))}
+                            <button onClick={() => setChoosing(null)} aria-label="Cancel" className="px-1 text-muted hover:text-fg">✕</button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setChoosing(t.id)} disabled={busy !== null || !canTrade} className="rounded-full border border-line px-3 py-1 hover:border-line-strong disabled:opacity-40">
+                            Close
+                          </button>
+                        )}
                         {errors[t.id] && <div role="alert" className="mt-1 max-w-56 text-right text-[11px] text-down">{errors[t.id]}</div>}
                       </td>
                     </tr>

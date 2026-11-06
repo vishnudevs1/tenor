@@ -65,7 +65,7 @@ export interface ClosedTrade {
   net: number;
   openedAt: number | null;
   closedAt: number;
-  reason: "close" | "tp" | "sl" | "breach" | "pass" | string;
+  reason: "close" | "partial" | "tp" | "sl" | "breach" | "pass" | string;
 }
 
 export class TradeError extends Error {
@@ -95,21 +95,28 @@ function freshMarks(snap: MarketSnapshot | null): Marks | null {
 
 const equityOf = (a: AccountRow, tickets: TicketRow[], marks: Marks) => a.balance + tickets.reduce((s, k) => s + unrealized(k, marks[k.market] ?? k.entry), 0);
 
-/** Record a ticket's closing fill, book the P&L and delete the ticket. Runs inside a transaction. */
-async function closeTicketAt(t: Q, a: AccountRow, k: TicketRow, price: number, reason: string) {
-  const qty = Math.abs(k.qty);
+/**
+ * Close all or part of a ticket at `price`: record the closing fill, book the P&L, then delete or shrink the ticket.
+ * The open fee is split pro rata so every history row shows its own exact net P&L.
+ * Runs inside a transaction. `portion` is the share of the ticket's size to close, in (0, 1].
+ */
+async function closeTicketAt(t: Q, a: AccountRow, k: TicketRow, price: number, reason: string, portion = 1) {
+  const full = portion >= 1 - 1e-9;
+  const qty = Math.abs(k.qty) * (full ? 1 : portion);
   const side: Side = k.qty > 0 ? "sell" : "buy";
-  const realized = unrealized(k, price);
+  const realized = Math.sign(k.qty) * qty * (price - k.entry);
   const fee = qty * price * TAKER_FEE;
+  const openFee = full ? k.open_fee : k.open_fee * portion;
   a.balance += realized - fee;
   await setBalance(t, a);
   await t.run(
     `INSERT INTO fills (account_id, market, side, qty, price, fee, realized_pnl, reason, ts, ticket_id, entry, open_fee, opened_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-    [a.id, k.market, side, qty, price, fee, realized, reason, Date.now(), k.id, k.entry, k.open_fee, k.opened_at],
+    [a.id, k.market, side, qty, price, fee, realized, full ? reason : "partial", Date.now(), k.id, k.entry, openFee, k.opened_at],
   );
-  await t.run("DELETE FROM tickets WHERE id = $1", [k.id]);
-  return { qty, price, fee, realized };
+  if (full) await t.run("DELETE FROM tickets WHERE id = $1", [k.id]);
+  else await t.run("UPDATE tickets SET qty = $1, open_fee = $2 WHERE id = $3", [k.qty - Math.sign(k.qty) * qty, k.open_fee - openFee, k.id]);
+  return { qty, price, fee, realized, remaining: full ? 0 : Math.abs(k.qty) - qty };
 }
 
 /**
@@ -430,8 +437,12 @@ export async function placeOrder(userId: string, accountId: string, input: Order
   return { fill: out.fill, account: out.view };
 }
 
-/** Market-close one ticket (or all) against the real book. Allowed off-hours: reducing risk is never blocked. */
-export async function closeTickets(userId: string, accountId: string, ticketId: number | "all") {
+/**
+ * Market-close one ticket (or all), fully or partly (`fraction` of each, e.g. 0.25), against the real book.
+ * Allowed off-hours: reducing risk is never blocked.
+ */
+export async function closeTickets(userId: string, accountId: string, ticketId: number | "all", fraction = 1) {
+  if (!(fraction > 0 && fraction <= 1)) throw new TradeError("Close size must be between 1% and 100%");
   const [, snap, open] = await Promise.all([owned(userId, accountId), snapshot(), getTickets(db, accountId)]);
   const targets = ticketId === "all" ? open : open.filter((k) => k.id === ticketId);
   if (targets.length === 0) throw new TradeError(ticketId === "all" ? "No open trades" : "This trade is already closed", 409);
@@ -447,12 +458,15 @@ export async function closeTickets(userId: string, accountId: string, ticketId: 
     const ids = new Set(targets.map((k) => k.id));
     const closes = [];
     for (const k of (await getTickets(t, a.id)).filter((x) => ids.has(x.id))) {
+      const mark = marks[k.market] ?? k.entry;
+      // Don't leave dust: if what would remain is under the minimum order size, close the whole trade.
+      const portion = Math.abs(k.qty) * (1 - fraction) * mark < MIN_ORDER_USD ? 1 : fraction;
       const book = books.get(k.market);
       const levels = k.qty > 0 ? book?.bids : book?.asks;
-      const fill = levels ? walkBookQty(levels, Math.abs(k.qty)) : null;
+      const fill = levels ? walkBookQty(levels, Math.abs(k.qty) * portion) : null;
       // No visible liquidity (e.g. venue maintenance): fall back to mark with modelled slippage rather than trap the trade.
-      const price = fill?.avgPrice ?? forcedClosePrice(k, marks[k.market] ?? k.entry);
-      closes.push({ ticketId: k.id, ...(await closeTicketAt(t, a, k, price, "close")) });
+      const price = fill?.avgPrice ?? forcedClosePrice(k, mark);
+      closes.push({ ticketId: k.id, ...(await closeTicketAt(t, a, k, price, "close", portion)) });
     }
     await enforce(t, a, marks);
     return { closes, view: toView(a, await getTickets(t, a.id), marks) };

@@ -82,6 +82,42 @@ if (closedMkt) {
   console.log("    (all markets open right now — skipped; runs when FX/gold are off-hours)");
 }
 
+console.log("partial closes");
+const pc = await E.insertAccount(db, U, "50000-classic-1", null);
+const po = await E.placeOrder(U, pc, { market: "BTC-USD", side: "buy", notional: 20_000 });
+const pid = po.fill.ticketId;
+const q0 = po.fill.qty;
+let pr = await E.closeTickets(U, pc, pid, 0.25);
+let open1 = pr.account.positions.find((p) => p.id === pid);
+near(open1.qty, q0 * 0.75, 1e-9);
+near(open1.entry, po.fill.price);
+near(open1.openFee, po.fill.fee * 0.75, 1e-9);
+ok("25% close keeps the same trade #, entry and 75% of the size + open fee");
+pr = await E.closeTickets(U, pc, pid, 0.5);
+open1 = pr.account.positions.find((p) => p.id === pid);
+near(open1.qty, q0 * 0.375, 1e-9);
+ok("50% of the remainder → 37.5% of the original left");
+await rejects(E.closeTickets(U, pc, pid, 0), /between 1% and 100%/, "0% is rejected");
+await rejects(E.closeTickets(U, pc, pid, 1.5), /between 1% and 100%/, ">100% is rejected");
+pr = await E.closeTickets(U, pc, pid, 1);
+assert.ok(!pr.account.positions.some((p) => p.id === pid));
+const ph = (await E.getTradeHistory(U, pc)).filter((x) => x.ticketId === pid);
+assert.deepEqual(ph.map((x) => x.reason).sort(), ["close", "partial", "partial"]);
+near(ph.reduce((s, x) => s + x.qty, 0), q0, 1e-9);
+near(ph.reduce((s, x) => s + (x.fees - x.qty * x.exit * 0.0005), 0), po.fill.fee, 1e-9); // open fee split exactly across the 3 rows
+near(pr.account.balance, 50_000 + ph.reduce((s, x) => s + x.net, 0));
+ok("3 history rows (partial, partial, close) sum to the full size, open fee and balance exactly");
+
+const dust = await E.placeOrder(U, pc, { market: "SOL-USD", side: "buy", notional: 12 });
+pr = await E.closeTickets(U, pc, dust.fill.ticketId, 0.25);
+assert.ok(!pr.account.positions.some((p) => p.id === dust.fill.ticketId));
+ok("a partial close that would leave < $10 closes the whole trade (no dust)");
+
+const pa = await Promise.all([1, 2].map(() => E.placeOrder(U, pc, { market: "ETH-USD", side: "sell", notional: 4_000 })));
+pr = await E.closeTickets(U, pc, "all", 0.5);
+for (const x of pa) near(pr.account.positions.find((p) => p.id === x.fill.ticketId).qty, -x.fill.qty * 0.5, 1e-9);
+ok("Close all at 50% halves every open trade");
+
 console.log("TP / SL triggers");
 const tps = E.insertAccount(db, U, "25000-classic-1", null);
 const tpAcct = await tps;
