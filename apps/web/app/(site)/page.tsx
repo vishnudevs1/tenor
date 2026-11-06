@@ -41,7 +41,7 @@ export default function Home() {
     <>
       {/* Hero */}
       <section className="hero-glow relative overflow-hidden">
-        <div className="mx-auto max-w-6xl px-4 pb-20 pt-16 text-center sm:px-6 sm:pb-28 sm:pt-24">
+        <div className="mx-auto max-w-6xl px-4 pb-16 pt-14 text-center sm:px-6 sm:pb-20 sm:pt-20">
           <Link
             href="/challenges"
             className="inline-flex items-center gap-2.5 rounded-full border border-line bg-surface/80 py-1.5 pl-3 pr-4 text-sm text-muted transition-colors hover:border-line-strong hover:text-fg"
@@ -70,16 +70,17 @@ export default function Home() {
             </ButtonLink>
           </div>
 
-          <dl className="mx-auto mt-16 grid max-w-3xl grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-4">
+          <dl className="mx-auto mt-14 grid max-w-3xl grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-4">
             {[
               ["A-book share", "100%"],
               ["Profit split", "80%"],
-              ["Markets", "Crypto · Gold · FX"],
+              ["Markets", "Crypto, gold, FX"],
               ["Settlement", "USDC on Arc"],
             ].map(([k, v]) => (
-              <div key={k} className="bg-surface px-4 py-5">
+              <div key={k} className="flex flex-col items-center justify-center gap-1.5 bg-surface px-3 py-5">
                 <dt className="text-xs text-muted">{k}</dt>
-                <dd className="num mt-1 text-xl font-medium">{v}</dd>
+                {/* Sans, not the mono price font: these are words as much as numbers, and must not wrap. */}
+                <dd className="whitespace-nowrap text-lg font-semibold tracking-tight tabular-nums sm:text-xl">{v}</dd>
               </div>
             ))}
           </dl>
@@ -87,14 +88,14 @@ export default function Home() {
       </section>
 
       {/* Promises */}
-      <section className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28">
+      <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
         <SectionHeading eyebrow="Three promises" title="Enforced by code, not marketing." />
-        <div className="mt-12 grid gap-4 md:grid-cols-3">
+        <div className="mt-10 grid gap-4 md:grid-cols-3">
           {PROMISES.map((p) => (
-            <Card key={p.n} className="p-6 sm:p-7">
-              <div className="num text-sm text-accent">{p.n}</div>
-              <h3 className="mt-6 text-xl font-semibold tracking-tight">{p.title}</h3>
-              <p className="mt-3 text-[15px] leading-relaxed text-muted">{p.body}</p>
+            <Card key={p.n} className="flex h-full flex-col p-6">
+              <span className="num grid size-9 place-items-center rounded-full bg-accent/10 text-sm font-medium text-accent">{p.n}</span>
+              <h3 className="mt-5 text-lg font-semibold tracking-tight">{p.title}</h3>
+              <p className="mt-2 text-[15px] leading-relaxed text-muted">{p.body}</p>
             </Card>
           ))}
         </div>
@@ -102,30 +103,30 @@ export default function Home() {
 
       {/* Challenges */}
       <section id="challenges" className="scroll-mt-20 border-y border-line bg-surface/40">
-        <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28">
-          <SectionHeading eyebrow="Challenges" title="Pass once. Get funded. Keep 80%." sub="One step, no time limit, no consistency rule. Prices are set onchain so the firm stays solvent without a B-book." />
-          <div className="mt-12">
+        <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
+          <SectionHeading eyebrow="Challenges" title="Pass once. Get funded. Keep 80%." sub="1-step or 2-step, no time limit, no consistency rule. Prices are set onchain so the firm stays solvent without a B-book." />
+          <div className="mt-10">
             <ChallengePicker />
           </div>
         </div>
       </section>
 
       {/* How it works */}
-      <section id="how" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-20 sm:px-6 sm:py-28">
+      <section id="how" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-16 sm:px-6 sm:py-20">
         <SectionHeading eyebrow="How it works" title="Four steps. All on Arc." />
-        <ol className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <ol className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s, i) => (
-            <li key={s.title} className="rounded-card border border-line p-6">
-              <div className="grid size-9 place-items-center rounded-full bg-white/5 text-sm font-medium num">{i + 1}</div>
-              <h3 className="mt-5 font-semibold">{s.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted">{s.body}</p>
+            <li key={s.title} className="flex h-full flex-col rounded-card border border-line bg-surface p-6">
+              <span className="num grid size-9 place-items-center rounded-full bg-white/5 text-sm font-medium">{String(i + 1).padStart(2, "0")}</span>
+              <h3 className="mt-5 text-lg font-semibold tracking-tight">{s.title}</h3>
+              <p className="mt-2 text-[15px] leading-relaxed text-muted">{s.body}</p>
             </li>
           ))}
         </ol>
       </section>
 
       {/* Local currency */}
-      <section className="mx-auto max-w-6xl px-4 pb-20 sm:px-6 sm:pb-28">
+      <section className="mx-auto max-w-6xl px-4 pb-16 sm:px-6 sm:pb-20">
         <Card className="overflow-hidden p-6 sm:p-12">
           <div className="grid items-center gap-10 md:grid-cols-2">
             <div>
@@ -160,7 +161,7 @@ export default function Home() {
       </section>
 
       {/* FAQ */}
-      <section id="faq" className="mx-auto max-w-3xl scroll-mt-20 px-4 py-20 sm:px-6 sm:py-28">
+      <section id="faq" className="mx-auto max-w-3xl scroll-mt-20 px-4 py-16 sm:px-6 sm:py-20">
         <SectionHeading title="Questions, answered." />
         <div className="mt-10 divide-y divide-line border-y border-line">
           {FAQ.map(([q, a]) => (
@@ -179,7 +180,7 @@ export default function Home() {
 
       {/* CTA */}
       <section className="hero-glow">
-        <div className="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6">
+        <div className="mx-auto max-w-6xl px-4 py-16 text-center sm:px-6 sm:py-20">
           <h2 className="font-display text-5xl leading-[1.02] sm:text-6xl">Trade like it's real. Because it is.</h2>
           <ButtonLink href="#challenges" size="lg" className="mt-8">
             Choose a challenge
