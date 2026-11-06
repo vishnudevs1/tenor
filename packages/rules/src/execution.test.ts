@@ -54,3 +54,13 @@ test("TP/SL triggers", () => {
   assert.equal(triggered({ qty: -1, entry: 100, tp: 90, sl: 105 }, 106), "sl");
   assert.equal(triggered({ qty: -1, entry: 100, tp: 90, sl: 105 }, 100), null);
 });
+
+test("position cap = 5% of ±2% depth, rounded down to a clean number, clamped", async () => {
+  const { positionCapFromBook } = await import("./execution.ts");
+  const bids = [{ price: 99.5, qty: 30_000 }, { price: 90, qty: 1_000_000 }]; // second level is outside ±2%
+  const asks = [{ price: 100.5, qty: 20_000 }];
+  // depth ≈ 99.5×30k + 100.5×20k = 4.995M → 5% ≈ 249,750 → $200K (clean step below)
+  assert.equal(positionCapFromBook(bids, asks), 200_000);
+  assert.equal(positionCapFromBook([], []), 10_000, "no book → floor");
+  assert.equal(positionCapFromBook([{ price: 100, qty: 1e9 }], [{ price: 100.1, qty: 1e9 }]), 2_000_000, "deep book → ceiling");
+});

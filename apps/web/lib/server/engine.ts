@@ -10,6 +10,7 @@ import {
   unrealized,
   walkBook,
   walkBookQty,
+  positionCapFromBook,
   type Evaluation,
   type Side,
 } from "@tenor/rules";
@@ -368,6 +369,7 @@ export interface OrderInput {
   market: string;
   side: Side;
   notional: number; // USD
+  leverage?: number; // trader's chosen leverage, 1 … market max (default: market max)
   tp?: number | null;
   sl?: number | null;
 }
@@ -398,6 +400,12 @@ export async function placeOrder(userId: string, accountId: string, input: Order
   if (!marks || !stats || !book) throw new TradeError("Live prices are unavailable right now — try again in a moment", 503);
   if (!stats.open) throw new TradeError(`${m.name} is closed right now — you can still close open trades`);
   const dir = input.side === "buy" ? 1 : -1;
+  const leverage = input.leverage ?? m.maxLeverage;
+  if (!(Number.isFinite(leverage) && leverage >= 1 && leverage <= m.maxLeverage)) {
+    throw new TradeError(`Leverage on ${m.base} must be between 1× and ${m.maxLeverage}×`);
+  }
+  // Same formula as the cap shown in the UI, applied to the book we're about to fill against.
+  const cap = positionCapFromBook(book.bids, book.asks);
   checkTpSl(dir, stats.mark, input.tp, input.sl);
 
   const out = await tx(async (t) => {
@@ -413,10 +421,14 @@ export async function placeOrder(userId: string, accountId: string, input: Order
     const fee = fill.notional * TAKER_FEE;
     const equity = equityOf(a, tickets, marks) - fee;
     // Gross exposure per market (hedged trades count both ways — conservative).
-    const gross = tickets.filter((k) => k.market === m.symbol).reduce((s, k) => s + Math.abs(k.qty) * stats.mark, 0) + fill.qty * stats.mark;
-    const maxNotional = Math.max(0, equity) * m.maxLeverage;
+    const existing = tickets.filter((k) => k.market === m.symbol).reduce((s, k) => s + Math.abs(k.qty) * stats.mark, 0);
+    const gross = existing + fill.qty * stats.mark;
+    const maxNotional = Math.max(0, equity) * leverage;
     if (gross > maxNotional) {
-      throw new TradeError(`Max leverage on ${m.assetClass.toLowerCase()} is ${m.maxLeverage}× — you can add up to $${Math.max(0, Math.floor(maxNotional - (gross - fill.qty * stats.mark))).toLocaleString()}`);
+      throw new TradeError(`At ${leverage}× leverage you can add up to $${Math.max(0, Math.floor(maxNotional - existing)).toLocaleString()} in ${m.base}`);
+    }
+    if (gross > cap) {
+      throw new TradeError(`Position cap for ${m.base} is $${cap.toLocaleString()} — you can add up to $${Math.max(0, Math.floor(cap - existing)).toLocaleString()}`);
     }
 
     const now = Date.now();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TAKER_FEE } from "@tenor/rules";
 import type { AccountView } from "@/lib/server/engine";
 import { formatPrice, type Market, type MarketStats } from "@/lib/markets";
@@ -9,6 +9,22 @@ import { usd } from "@/lib/format";
 import { ButtonLink, cx } from "../ui";
 
 type Side = "buy" | "sell";
+
+const LEV_KEY = "tenor.leverage.v1";
+function savedLeverage(symbol: string, max: number) {
+  try {
+    const v = Number((JSON.parse(localStorage.getItem(LEV_KEY) ?? "{}") as Record<string, number>)[symbol]);
+    return v >= 1 && v <= max ? v : 1;
+  } catch {
+    return 1;
+  }
+}
+function saveLeverage(symbol: string, v: number) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LEV_KEY) ?? "{}") as Record<string, number>;
+    localStorage.setItem(LEV_KEY, JSON.stringify({ ...all, [symbol]: v }));
+  } catch {}
+}
 
 export function OrderForm({
   account,
@@ -31,13 +47,17 @@ export function OrderForm({
   const [tp, setTp] = useState("");
   const [sl, setSl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [leverage, setLeverage] = useState(1); // conservative default; 5× is the ceiling
+  useEffect(() => setLeverage(savedLeverage(market.symbol, market.maxLeverage)), [market.symbol, market.maxLeverage]);
   const [msg, setMsg] = useState<{ tone: "up" | "down"; text: string } | null>(null);
 
   const active = account?.status === "active";
   const inMarket = account?.positions.filter((p) => p.market === market.symbol) ?? [];
   const gross = inMarket.reduce((s, p) => s + Math.abs(p.qty) * mark, 0);
   const net = inMarket.reduce((s, p) => s + p.qty, 0);
-  const maxNotional = Math.max(0, equity * market.maxLeverage - gross);
+  const cap = stats?.positionCap ?? 0;
+  // Buying power: chosen leverage on equity, never beyond the market's position cap.
+  const maxNotional = Math.max(0, Math.min(equity * leverage - gross, cap > 0 ? cap - gross : Infinity));
   const notional = Number(amount) || 0;
   const fee = notional * TAKER_FEE;
   const usedPct = maxNotional > 0 ? Math.min(100, Math.round((notional / maxNotional) * 100)) : 0;
@@ -58,7 +78,7 @@ export function OrderForm({
     const t0 = performance.now();
     try {
       const res = await api<{ account: AccountView; fill: { qty: number; price: number } }>("/api/orders", {
-        body: { accountId: account.id, market: market.symbol, side, notional, tp: tpsl ? tp : null, sl: tpsl ? sl : null },
+        body: { accountId: account.id, market: market.symbol, side, notional, leverage, tp: tpsl ? tp : null, sl: tpsl ? sl : null },
       });
       onPlaced(res.account);
       setAmount("");
@@ -91,9 +111,34 @@ export function OrderForm({
       </div>
 
       <div>
+        <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
+          <span>Leverage</span>
+          <span>max {market.maxLeverage}×</span>
+        </div>
+        <div role="radiogroup" aria-label="Leverage" className="grid gap-1 rounded-xl bg-bg p-1" style={{ gridTemplateColumns: `repeat(${market.maxLeverage}, minmax(0, 1fr))` }}>
+          {Array.from({ length: market.maxLeverage }, (_, i) => i + 1).map((x) => (
+            <button
+              key={x}
+              type="button"
+              role="radio"
+              aria-checked={leverage === x}
+              disabled={!active}
+              onClick={() => {
+                setLeverage(x);
+                saveLeverage(market.symbol, x);
+              }}
+              className={cx("num h-8 rounded-lg text-xs font-medium transition-colors disabled:opacity-40", leverage === x ? "bg-white/10 text-fg" : "text-muted hover:text-fg")}
+            >
+              {x}×
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
         <label htmlFor="amount" className="flex justify-between text-xs text-muted">
           <span>Size (USD)</span>
-          <span>Market · up to {market.maxLeverage}×</span>
+          <span>Market order</span>
         </label>
         <div className="relative mt-1.5">
           <input id="amount" inputMode="decimal" placeholder="0" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} disabled={!active} className={cx(field, "h-12 pr-16 text-lg")} />
@@ -149,6 +194,7 @@ export function OrderForm({
       <dl className="space-y-1.5 border-t border-line pt-3 text-xs">
         {[
           ["Available to trade", account ? usd(maxNotional) : "—"],
+          ["Position cap", cap > 0 ? usd(cap) : "—"],
           ["Open trades in this market", String(inMarket.length)],
           ["Est. fee", notional > 0 ? usd(fee, true) : "—"],
           ["Est. breach price", breach && breach > 0 ? formatPrice(breach, market) : "—"],

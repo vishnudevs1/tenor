@@ -97,3 +97,25 @@ export function triggered(pos: PositionState & { tp: number | null; sl: number |
   }
   return null;
 }
+
+/**
+ * Per-market position cap sized from real liquidity (blueprint §3.3): a share of the USD depth within
+ * ±band of mid, rounded down to a clean number so it reads well ($250K, not $253,118) and clamped.
+ */
+export function positionCapFromBook(
+  bids: Level[],
+  asks: Level[],
+  { band = 0.02, share = 0.05, min = 10_000, max = 2_000_000 } = {},
+): number {
+  const bestBid = bids[0]?.price ?? 0;
+  const bestAsk = asks[0]?.price ?? 0;
+  if (!(bestBid > 0 && bestAsk > 0)) return min;
+  const mid = (bestBid + bestAsk) / 2;
+  const depth =
+    bids.filter((l) => l.price >= mid * (1 - band)).reduce((s, l) => s + l.price * l.qty, 0) +
+    asks.filter((l) => l.price <= mid * (1 + band)).reduce((s, l) => s + l.price * l.qty, 0);
+  const raw = Math.min(max, Math.max(min, depth * share));
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [5, 2.5, 2, 1].map((m) => m * mag).find((v) => v <= raw) ?? mag;
+  return Math.max(min, Math.floor(raw / step) * step);
+}

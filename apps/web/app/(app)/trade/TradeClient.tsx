@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { evaluate, unrealized } from "@tenor/rules";
 import type { AccountView, ClosedTrade } from "@/lib/server/engine";
-import { CHART_INTERVALS, MARKETS, MARKET_BY_SYMBOL, displayPair, formatPrice, type ChartInterval, type MarketStats } from "@/lib/markets";
+import { CHART_INTERVALS, MARKET_BY_SYMBOL, displayPair, formatPrice, type ChartInterval, type MarketStats } from "@/lib/markets";
+import { MarketIcon, MarketSearch } from "@/components/trade/MarketSearch";
 import { OrderBook } from "@/components/trade/OrderBook";
 import { OrderForm } from "@/components/trade/OrderForm";
 import { Positions } from "@/components/trade/Positions";
@@ -19,54 +20,23 @@ const Panel = ({ className, children }: { className?: string; children: React.Re
   <section className={cx("min-w-0 rounded-2xl border border-line bg-surface", className)}>{children}</section>
 );
 
-function MarketPicker({ value, stats, onChange }: { value: string; stats: Record<string, MarketStats>; onChange: (s: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const m = MARKET_BY_SYMBOL[value];
-  useEffect(() => {
-    if (!open) return;
-    const f = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
-    document.addEventListener("mousedown", f);
-    return () => document.removeEventListener("mousedown", f);
-  }, [open]);
-
+/** Header button showing the current market; opens the full market search. */
+function MarketButton({ symbol, onOpen }: { symbol: string; onOpen: () => void }) {
+  const m = MARKET_BY_SYMBOL[symbol];
   return (
-    <div ref={ref} className="relative">
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-white/5">
-        <span className="text-lg font-semibold">{displayPair(m)}</span>
-        <Badge tone="neutral">{m.maxLeverage}×</Badge>
-        <span className="text-muted" aria-hidden>⌄</span>
-      </button>
-      {open && (
-        <ul role="listbox" className="absolute left-0 top-12 z-40 w-72 rounded-2xl border border-line-strong bg-surface-2 p-1.5 shadow-2xl shadow-black/60">
-          {MARKETS.map((x) => {
-            const s = stats[x.symbol];
-            return (
-              <li key={x.symbol}>
-                <button
-                  role="option"
-                  aria-selected={x.symbol === value}
-                  onClick={() => {
-                    onChange(x.symbol);
-                    setOpen(false);
-                  }}
-                  className={cx("flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm hover:bg-white/5", x.symbol === value && "bg-white/[0.06]")}
-                >
-                  <span>
-                    <span className="font-medium">{displayPair(x)}</span> <span className="text-xs text-muted">{x.name}</span>
-                    {s && !s.open && <span className="ml-1.5 text-[10px] text-warn">closed</span>}
-                  </span>
-                  <span className="text-right">
-                    <span className="num block">{s ? formatPrice(s.mark, x) : "—"}</span>
-                    {s && <span className={cx("num text-xs", s.change24h >= 0 ? "text-up" : "text-down")}>{pct(s.change24h, 2)}</span>}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
+    <button onClick={onOpen} aria-haspopup="dialog" className="flex shrink-0 items-center gap-2.5 rounded-xl px-2 py-1.5 hover:bg-white/5">
+      <MarketIcon m={m} size={32} />
+      <span className="text-left">
+        <span className="flex items-center gap-2">
+          <span className="text-base font-semibold">{displayPair(m)}</span>
+          <span className="rounded-md bg-up/10 px-1.5 py-0.5 text-[11px] font-medium text-up">{m.maxLeverage}×</span>
+        </span>
+        <span className="text-[11px] text-faint">{m.name}</span>
+      </span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted" aria-hidden>
+        <path d="M6 9l6 6 6-6" strokeLinecap="round" />
+      </svg>
+    </button>
   );
 }
 
@@ -75,6 +45,7 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
   const [symbol, setSymbol] = useState(initialMarket);
   const [interval, setInterval_] = useState<ChartInterval>("1m");
   const [accountId, setAccountId] = useState(initialAccountId);
+  const [searchOpen, setSearchOpen] = useState(false);
   const market = MARKET_BY_SYMBOL[symbol];
 
   // Slow-moving stats (24h volume, OI, funding, open/closed) over REST; prices stream live below.
@@ -124,7 +95,7 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
     <div className="grid gap-2 p-2 lg:grid-cols-[minmax(0,1fr)_280px_320px]">
       {/* Market header */}
       <Panel className="flex items-center gap-6 overflow-x-auto px-3 py-2 lg:col-span-2 lg:col-start-1 lg:row-start-1">
-        <MarketPicker value={symbol} stats={markets.data?.stats ?? {}} onChange={setSymbol} />
+        <MarketButton symbol={symbol} onOpen={() => setSearchOpen(true)} />
         <div className="shrink-0">
           <div className="num text-xl font-semibold">{last ? formatPrice(last, market) : mark ? formatPrice(mark, market) : "—"}</div>
           <div className="text-[11px] text-faint">Last trade</div>
@@ -132,6 +103,7 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
         <dl className="flex shrink-0 gap-6 text-xs">
           {[
             ["Mark", mark ? formatPrice(mark, market) : "—", null],
+            ["Position cap", stats?.positionCap ? `${short(stats.positionCap)}` : "—", null],
             ["Index", stats ? formatPrice(stats.index, market) : "—", null],
             ["24h change", stats ? pct(stats.change24h, 2) : "—", stats ? (stats.change24h >= 0 ? "text-up" : "text-down") : null],
             ["24h volume", stats ? `$${short(stats.volume24h)}` : "—", null],
@@ -241,6 +213,8 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
       <Panel className="lg:col-span-2 lg:col-start-1 lg:row-start-3">
         <Positions account={account} history={acct.data?.history ?? []} marks={marks} onChange={onAccount} />
       </Panel>
+
+      <MarketSearch open={searchOpen} onClose={() => setSearchOpen(false)} value={symbol} stats={markets.data?.stats ?? {}} onSelect={setSymbol} />
 
       {/* Status bar */}
       <div className="flex flex-wrap items-center gap-4 px-2 text-[11px] text-faint lg:col-span-3">

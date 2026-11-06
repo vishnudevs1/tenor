@@ -1,4 +1,5 @@
 import "server-only";
+import { positionCapFromBook } from "@tenor/rules";
 import { INTERVALS, MARKETS, MARKET_BY_SYMBOL, type Candle, type IntervalKey, type MarketStats, type OrderBook } from "@/lib/markets";
 
 // Extended public REST API (no key needed for market data).
@@ -75,6 +76,7 @@ export function getMarkets(): Promise<MarketSnapshot> {
         openInterest: num(s.openInterest),
         funding: num(s.fundingRate),
         open: r.active && r.status === "ACTIVE" && !r.isOffHours && mark > 0,
+        positionCap: 0, // filled from book depth by getPositionCaps()
       };
     }
     return { stats, at: Date.now() };
@@ -128,5 +130,15 @@ export function getRecentTrades(symbol: string): Promise<RecentTrade[]> {
   return cached(`trades:${symbol}`, 2_000, async () => {
     const raw = await get<{ S: string; p: string; q: string; T: number }[]>(`/info/markets/${encodeURIComponent(symbol)}/trades`);
     return raw.slice(0, 40).map((t) => ({ price: num(t.p), qty: num(t.q), side: t.S === "BUY" ? "buy" : "sell", ts: t.T }));
+  });
+}
+
+/** Per-market position caps from live ±2% book depth. Depth moves slowly, so a 60s cache is plenty. */
+export function getPositionCaps(): Promise<Record<string, number>> {
+  return cached("caps", 60_000, async () => {
+    const entries = await Promise.all(
+      MARKETS.map(async (m) => [m.symbol, await getOrderBook(m.symbol).then((b) => positionCapFromBook(b.bids, b.asks), () => 0)] as const),
+    );
+    return Object.fromEntries(entries.filter(([, cap]) => cap > 0));
   });
 }

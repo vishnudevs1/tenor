@@ -32,7 +32,10 @@ assert.equal(a3.account.positions.length, 3, "three independent tickets, not one
 assert.deepEqual(a3.account.positions.map((p) => Math.sign(p.qty)), [1, 1, -1]);
 ok("each order opens its own trade (long, long, short coexist)");
 
-await rejects(E.placeOrder(U, demo, { market: "BTC-USD", side: "buy", notional: 30_000 }), /Max leverage/, "5× gross leverage cap per market");
+await rejects(E.placeOrder(U, demo, { market: "BTC-USD", side: "buy", notional: 30_000 }), /At 5× leverage you can add up to/, "5× gross leverage cap per market");
+await rejects(E.placeOrder(U, demo, { market: "ETH-USD", side: "buy", notional: 12_000, leverage: 1 }), /At 1× leverage/, "chosen 1× leverage limits buying power to equity");
+await rejects(E.placeOrder(U, demo, { market: "ETH-USD", side: "buy", notional: 100, leverage: 6 }), /between 1× and 5×/, "leverage above 5× is refused");
+await rejects(E.placeOrder(U, demo, { market: "SOL-USD", side: "buy", notional: 100, leverage: 4 }), /between 1× and 3×/, "alts are capped at 3×");
 await rejects(E.placeOrder(U, demo, { market: "BTC-USD", side: "buy", notional: 5 }), /Minimum order/, "minimum order size");
 await rejects(E.placeOrder(U, demo, { market: "BTC-USD", side: "buy", notional: 100, tp: 1 }), /Take profit must be above/, "TP on wrong side rejected");
 await rejects(E.placeOrder(U, demo, { market: "BTC-USD", side: "sell", notional: 100, sl: 1 }), /Stop loss must be above/, "short SL on wrong side rejected");

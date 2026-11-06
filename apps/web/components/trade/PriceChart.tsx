@@ -15,7 +15,7 @@ import {
 } from "lightweight-charts";
 import { INTERVAL_SECONDS, isVenueInterval, type Candle, type ChartInterval } from "@/lib/markets";
 import { api } from "@/lib/client";
-import { subscribeTrades, type StreamTrade } from "@/lib/stream";
+import { rememberedTrades, subscribeTrades, type StreamTrade } from "@/lib/stream";
 
 // TradingView Lightweight Charts, driven tick-by-tick by the venue's trade stream.
 // ≥1m: history from the venue's REST candles, then every trade updates the live candle.
@@ -80,6 +80,9 @@ export function PriceChart({ symbol, interval, decimals, lines }: { symbol: stri
 
     series.setData([]);
     vol.setData([]);
+    // Each timeframe starts from a fresh zoom; inheriting 1m's zoom is what squeezed 1s bars into hairlines.
+    chart.current?.timeScale().applyOptions({ barSpacing: 6, rightOffset: 6 });
+    chart.current?.timeScale().resetTimeScale();
     setState("loading");
 
     const apply = (t: StreamTrade) => {
@@ -118,15 +121,27 @@ export function PriceChart({ symbol, interval, decimals, lines }: { symbol: stri
           bars = hist.length;
           chart.current?.timeScale().fitContent();
         } else {
-          // Seed sub-minute charts with the venue's most recent prints.
+          // Seed sub-minute charts with every trade this page has already seen, plus the venue's last prints
+          // (its REST API only returns ~50), de-duplicated.
           const { trades } = await api<{ trades: StreamTrade[] }>(`/api/book?symbol=${symbol}`);
           if (stop) return;
-          [...trades].sort((a, b) => a.ts - b.ts).forEach(apply);
-          chart.current?.timeScale().scrollToRealTime();
+          const seen = new Set<string>();
+          [...trades, ...rememberedTrades(symbol)]
+            .filter((t) => {
+              const k = `${t.ts}:${t.price}:${t.qty}`;
+              return !seen.has(k) && (seen.add(k), true);
+            })
+            .sort((a, b) => a.ts - b.ts)
+            .forEach(apply);
         }
         ready = true;
         pending.sort((a, b) => a.ts - b.ts).forEach(apply);
         pending.length = 0;
+        if (!isVenueInterval(interval)) {
+          // Sub-minute bars are few at first: show them at a readable width, pinned to now.
+          chart.current?.timeScale().applyOptions({ barSpacing: 10 });
+          chart.current?.timeScale().scrollToRealTime();
+        }
         setState(bars > 0 ? "ready" : "waiting");
       } catch {
         if (!stop) setState("error");

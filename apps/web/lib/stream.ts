@@ -8,7 +8,23 @@ import { useEffect, useRef, useState } from "react";
 import type { BookLevel } from "./markets";
 
 const BASE = process.env.NEXT_PUBLIC_EXTENDED_WS_URL ?? "wss://api.starknet.extended.exchange/stream.extended.exchange/v1";
-const FLUSH_MS = 100; // max ~10 renders/s regardless of message rate
+const FRAME_MS = 33; // repaint at most ~30×/s, in step with the display, regardless of message rate
+const TRADE_MEMORY_MS = 30 * 60_000; // per-market trade memory that seeds 1s/5s charts
+
+/** Run fn on animation frames (≥ FRAME_MS apart) until stopped. Pauses automatically in background tabs. */
+function frames(fn: () => void) {
+  let id = 0;
+  let last = 0;
+  const loop = (t: number) => {
+    if (t - last >= FRAME_MS) {
+      last = t;
+      fn();
+    }
+    id = requestAnimationFrame(loop);
+  };
+  id = requestAnimationFrame(loop);
+  return () => cancelAnimationFrame(id);
+}
 
 /** A WebSocket that reconnects with backoff until closed. */
 function connect(path: string, onMessage: (msg: unknown) => void, onState?: (live: boolean) => void) {
@@ -54,18 +70,33 @@ export interface StreamTrade {
 }
 
 type TradeListener = (trades: StreamTrade[]) => void;
-const tradeHubs = new Map<string, { listeners: Set<TradeListener>; conn: ReturnType<typeof connect>; live: boolean; stateListeners: Set<(l: boolean) => void> }>();
+interface TradeHub {
+  listeners: Set<TradeListener>;
+  stateListeners: Set<(l: boolean) => void>;
+  conn: ReturnType<typeof connect>;
+  live: boolean;
+  memory: StreamTrade[]; // oldest → newest, last TRADE_MEMORY_MS
+}
+const tradeHubs = new Map<string, TradeHub>();
+
+/** Trades seen on this page for a market (oldest first) — lets 1s/5s charts open with candles already drawn. */
+export function rememberedTrades(symbol: string): StreamTrade[] {
+  return tradeHubs.get(symbol)?.memory.slice() ?? [];
+}
 
 export function subscribeTrades(symbol: string, fn: TradeListener, onState?: (live: boolean) => void) {
   let hub = tradeHubs.get(symbol);
   if (!hub) {
-    const h = { listeners: new Set<TradeListener>(), stateListeners: new Set<(l: boolean) => void>(), live: false, conn: null as unknown as ReturnType<typeof connect> };
+    const h: TradeHub = { listeners: new Set(), stateListeners: new Set(), live: false, memory: [], conn: null as unknown as ReturnType<typeof connect> };
     h.conn = connect(
       `/publicTrades/${encodeURIComponent(symbol)}`,
       (msg) => {
         const data = (msg as { data?: { p: string; q: string; S: string; T: number }[] }).data;
         if (!Array.isArray(data)) return;
         const trades = data.map((t) => ({ price: Number(t.p), qty: Number(t.q), side: t.S === "BUY" ? ("buy" as const) : ("sell" as const), ts: t.T })).sort((a, b) => a.ts - b.ts);
+        h.memory.push(...trades);
+        const cutoff = Date.now() - TRADE_MEMORY_MS;
+        if (h.memory.length > 50_000 || (h.memory[0] && h.memory[0].ts < cutoff)) h.memory = h.memory.filter((t) => t.ts >= cutoff).slice(-50_000);
         h.listeners.forEach((l) => l(trades));
       },
       (live) => {
@@ -107,15 +138,15 @@ export function useTrades(symbol: string, keep = 30) {
       },
       setLive,
     );
-    const flush = setInterval(() => {
+    const stop = frames(() => {
       if (dirty) {
         dirty = false;
         setTrades(buf);
       }
-    }, FLUSH_MS);
+    });
     return () => {
       unsub();
-      clearInterval(flush);
+      stop();
     };
   }, [symbol, keep]);
   return { trades, last: trades[0]?.price, live };
@@ -183,14 +214,14 @@ export function useOrderBook(symbol: string, levels = 12) {
         if (!l) seq = -1;
       },
     );
-    const flush = setInterval(() => {
+    const stop = frames(() => {
       if (!dirty) return;
       dirty = false;
       setBook({ bids: top(bids, levels, true), asks: top(asks, levels, false), ts });
-    }, FLUSH_MS);
+    });
     return () => {
       conn.close();
-      clearInterval(flush);
+      stop();
     };
   }, [symbol, levels]);
 
