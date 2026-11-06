@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authSecret, googleConfigured } from "@/auth";
+import { authSecret, authSecretSource, googleConfigured } from "@/auth";
 import { treasuryAddress } from "@/lib/server/checkout";
 import { db } from "@/lib/server/db";
 import { getMarkets } from "@/lib/server/venue";
@@ -20,6 +20,7 @@ export async function GET() {
   ]);
   const config = {
     authSecret: Boolean(authSecret),
+    authSecretSource, // "derived" means AUTH_SECRET is not set — works, but set it to decouple from the Google secret
     googleClient: googleConfigured,
     treasuryAddress: treasuryAddress() !== null,
     cronSecret: Boolean(process.env.CRON_SECRET),
