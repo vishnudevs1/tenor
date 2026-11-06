@@ -12,9 +12,22 @@ const ORDER_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_LINES = 10;
 const MAX_QTY = 5;
 
+/** Raw env value, tolerant of the usual copy-paste noise: whitespace, quotes, and any letter case. */
+function treasuryRaw() {
+  return (process.env.TENOR_TREASURY_ADDRESS ?? "").trim().replace(/^["']|["']$/g, "").trim();
+}
+
 export function treasuryAddress(): `0x${string}` | null {
-  const t = process.env.TENOR_TREASURY_ADDRESS;
-  return t && isAddress(t) ? getAddress(t) : null;
+  // Lower-casing skips the EIP-55 checksum test (a mistyped mixed-case address would otherwise be rejected);
+  // getAddress then returns the canonical checksummed form.
+  const t = treasuryRaw().toLowerCase();
+  return isAddress(t) ? getAddress(t) : null;
+}
+
+/** For /api/health: distinguishes "not set" from "set but not an address". */
+export function treasuryStatus(): "ok" | "missing" | "invalid" {
+  if (!treasuryRaw()) return "missing";
+  return treasuryAddress() ? "ok" : "invalid";
 }
 
 const client = createPublicClient({ chain: arcChain, transport: http(arc.rpcUrl) });
