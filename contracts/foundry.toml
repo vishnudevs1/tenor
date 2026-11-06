@@ -1,0 +1,14 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.24"
+optimizer = true
+
+[fuzz]
+runs = 1000
+
+# Arc testnet — fill in from https://docs.arc.io before deploying
+[rpc_endpoints]
+arc_testnet = "${ARC_TESTNET_RPC}"

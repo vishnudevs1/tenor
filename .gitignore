@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+contracts/out
+contracts/cache
+contracts/lib
+.env*
+!.env.example
+
+.data
+.data-test
+
+# Business plan — kept private (not published with the code)
+arc-prop-firm-blueprint-v2.md
+*.tsbuildinfo

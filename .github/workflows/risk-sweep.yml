@@ -1,0 +1,29 @@
+# Enforces evaluation rules on every active account, even when nobody has the app open.
+# Vercel's Hobby plan only allows daily crons, so GitHub Actions calls the endpoint instead.
+# Setup (repo → Settings → Secrets and variables → Actions):
+#   secret   CRON_SECRET  = same value as CRON_SECRET in Vercel
+#   variable TENOR_URL    = https://<your-app>.vercel.app
+name: Risk sweep
+
+on:
+  schedule:
+    - cron: "*/5 * * * *" # GitHub's minimum interval; runs can be delayed under load
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call /api/cron/risk
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          TENOR_URL: ${{ vars.TENOR_URL }}
+        run: |
+          if [ -z "$TENOR_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "TENOR_URL / CRON_SECRET not configured yet — skipping."
+            exit 0
+          fi
+          curl --fail-with-body -sS -m 60 -H "Authorization: Bearer $CRON_SECRET" "$TENOR_URL/api/cron/risk"

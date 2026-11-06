@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+/* Tenor tokens — dark-first, calm, numbers-forward.
+   Change colors here, never inline in components. */
+@theme inline {
+  --color-bg: #07090d;
+  --color-surface: #0d1016;
+  --color-surface-2: #141922;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.16);
+  --color-fg: #eef0f4;
+  --color-muted: #8b93a3;
+  --color-faint: #5b6372;
+  --color-accent: #8cc8ff; /* Arc sky */
+  --color-accent-strong: #4ea4ff;
+  --color-up: #3ddc97;
+  --color-down: #ff6b6b;
+  --color-warn: #f5c451;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-serif), ui-serif, Georgia, serif;
+  --font-mono: var(--font-mono-face), ui-monospace, monospace;
+
+  --radius-card: 1.25rem;
+}
+
+html {
+  color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Soft glow behind hero sections */
+.hero-glow {
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgb(78 164 255 / 0.22), transparent 70%),
+    radial-gradient(40% 40% at 80% 20%, rgb(140 200 255 / 0.10), transparent 70%);
+}
+
+/* Signed-in app: a soft aurora at the top of every page */
+.app-glow {
+  background:
+    radial-gradient(70% 220px at 30% 0%, rgb(78 164 255 / 0.16), transparent 70%),
+    radial-gradient(50% 180px at 75% 0%, rgb(140 200 255 / 0.08), transparent 70%);
+  background-repeat: no-repeat;
+}
+
+/* Login sky (inspired by a calm cloud backdrop) — pure CSS, no images */
+.sky {
+  background: linear-gradient(180deg, #2f6fb8 0%, #5d9fe0 45%, #a9d3f5 100%);
+}
+.cloud {
+  position: absolute;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.55);
+  filter: blur(48px);
+  animation: drift 40s ease-in-out infinite alternate;
+}
+@keyframes drift {
+  from { transform: translateX(-4%) translateY(0); }
+  to { transform: translateX(4%) translateY(-2%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud { animation: none; }
+  * { scroll-behavior: auto !important; }
+}
+
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }

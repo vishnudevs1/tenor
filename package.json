@@ -1,0 +1,16 @@
+{
+  "name": "tenor",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @tenor/web",
+    "build": "npm run build -w @tenor/web",
+    "test": "npm test -w @tenor/rules"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
