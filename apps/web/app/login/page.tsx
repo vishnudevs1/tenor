@@ -55,7 +55,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
         <p aria-live="polite" className="mt-3 min-h-5 max-w-sm text-center text-sm font-medium text-white">
           {message}
-          {!googleConfigured && process.env.NODE_ENV !== "production" && "Dev: set AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET in apps/web/.env.local"}
+          {!googleConfigured &&
+            (process.env.NODE_ENV === "production"
+              ? "Sign-in is temporarily unavailable. Please try again shortly."
+              : "Dev: set AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET in apps/web/.env.local")}
         </p>
       </main>
 
