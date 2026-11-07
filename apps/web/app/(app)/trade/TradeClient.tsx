@@ -92,9 +92,9 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
 
   const a = liveAccount;
   return (
-    <div className="grid gap-2 p-2 lg:grid-cols-[minmax(0,1fr)_280px_320px]">
+    <div className="grid gap-2 p-2 lg:grid-cols-[minmax(0,1fr)_280px_320px] lg:grid-rows-[auto_auto_1fr]">
       {/* Market header */}
-      <Panel className="no-scrollbar flex items-center gap-6 overflow-x-auto px-3 py-2 lg:col-span-2 lg:col-start-1 lg:row-start-1">
+      <Panel className="no-scrollbar flex items-center gap-6 self-start overflow-x-auto px-3 py-2.5 lg:col-span-2 lg:col-start-1 lg:row-start-1">
         <MarketButton symbol={symbol} onOpen={() => setSearchOpen(true)} />
         <div className="shrink-0">
           <div className="num text-xl font-semibold">{last ? formatPrice(last, market) : mark ? formatPrice(mark, market) : "—"}</div>
@@ -210,7 +210,7 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
       </Panel>
 
       {/* Open trades + history */}
-      <Panel className="lg:col-span-2 lg:col-start-1 lg:row-start-3">
+      <Panel className="self-start lg:col-span-2 lg:col-start-1 lg:row-start-3">
         <Positions account={account} history={acct.data?.history ?? []} marks={marks} onChange={onAccount} />
       </Panel>
 

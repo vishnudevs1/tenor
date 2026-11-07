@@ -122,6 +122,56 @@ export function subscribeTrades(symbol: string, fn: TradeListener, onState?: (li
   };
 }
 
+// ── Quotes: top of book (~10 updates/s) — the continuous price that drives 1s/5s candles ──
+
+export interface Quote {
+  bid: number;
+  ask: number;
+  mid: number;
+  ts: number;
+}
+
+type QuoteListener = (q: Quote) => void;
+interface QuoteHub {
+  listeners: Set<QuoteListener>;
+  conn: ReturnType<typeof connect>;
+  memory: Quote[]; // oldest → newest, last TRADE_MEMORY_MS
+}
+const quoteHubs = new Map<string, QuoteHub>();
+
+/** Quotes seen on this page for a market (oldest first). */
+export function rememberedQuotes(symbol: string): Quote[] {
+  return quoteHubs.get(symbol)?.memory.slice() ?? [];
+}
+
+/** Best bid/ask stream. Venue trades can be seconds apart; the quote moves continuously, so fast candles have real bodies. */
+export function subscribeQuotes(symbol: string, fn: QuoteListener) {
+  let hub = quoteHubs.get(symbol);
+  if (!hub) {
+    const h: QuoteHub = { listeners: new Set(), memory: [], conn: null as unknown as ReturnType<typeof connect> };
+    h.conn = connect(`/orderbooks/${encodeURIComponent(symbol)}?depth=1`, (raw) => {
+      const d = (raw as { data?: { b?: { p: string }[]; a?: { p: string }[] }; ts?: number }).data;
+      const bid = Number(d?.b?.[0]?.p);
+      const ask = Number(d?.a?.[0]?.p);
+      if (!(bid > 0 && ask > 0 && ask >= bid)) return;
+      const q = { bid, ask, mid: (bid + ask) / 2, ts: (raw as { ts?: number }).ts ?? Date.now() };
+      h.memory.push(q);
+      if (h.memory.length > 40_000 || h.memory[0].ts < q.ts - TRADE_MEMORY_MS) h.memory = h.memory.filter((x) => x.ts >= q.ts - TRADE_MEMORY_MS).slice(-40_000);
+      h.listeners.forEach((l) => l(q));
+    });
+    quoteHubs.set(symbol, h);
+    hub = h;
+  }
+  hub.listeners.add(fn);
+  return () => {
+    hub!.listeners.delete(fn);
+    if (hub!.listeners.size === 0) {
+      hub!.conn.close();
+      quoteHubs.delete(symbol);
+    }
+  };
+}
+
 /** Last N trades for the tape, plus the latest trade price. */
 export function useTrades(symbol: string, keep = 30) {
   const [trades, setTrades] = useState<StreamTrade[]>([]);

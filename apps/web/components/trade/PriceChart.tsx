@@ -15,11 +15,12 @@ import {
 } from "lightweight-charts";
 import { INTERVAL_SECONDS, isVenueInterval, type Candle, type ChartInterval } from "@/lib/markets";
 import { api } from "@/lib/client";
-import { rememberedTrades, subscribeTrades, type StreamTrade } from "@/lib/stream";
+import { rememberedQuotes, rememberedTrades, subscribeQuotes, subscribeTrades, type StreamTrade } from "@/lib/stream";
 
 // TradingView Lightweight Charts, driven tick-by-tick by the venue's trade stream.
 // ≥1m: history from the venue's REST candles, then every trade updates the live candle.
-// 1s/5s: built entirely in the browser from the trade stream (the venue has no sub-minute history).
+// 1s/5s: built in the browser from the live best bid/ask (~10/s) plus trades for volume; quiet seconds get
+// flat candles so the timeline is continuous (the venue has no sub-minute history).
 
 // Canvas can't read CSS variables — these mirror the tokens in globals.css.
 const C = { up: "#3ddc97", down: "#ff6b6b", text: "#8b93a3", grid: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.08)", accent: "#8cc8ff" };
@@ -72,47 +73,89 @@ export function PriceChart({ symbol, interval, decimals, lines }: { symbol: stri
     const vol = volume.current;
     if (!series || !vol) return;
     const step = INTERVAL_SECONDS[interval];
+    const fast = !isVenueInterval(interval);
+    type Tick = { price: number; qty: number; ts: number };
     let last: Candle | null = null;
     let bars = 0;
     let ready = false;
     let stop = false;
-    const pending: StreamTrade[] = [];
+    const pending: Tick[] = [];
+    // Venue clock − local clock. Gap-filling runs on local time; without this, a fast local clock would open
+    // "future" bars and every real tick would then be dropped as late.
+    let skew = 0;
+    const venueNow = () => Date.now() + skew;
 
     series.setData([]);
     vol.setData([]);
     // Each timeframe starts from a fresh zoom; inheriting 1m's zoom is what squeezed 1s bars into hairlines.
-    chart.current?.timeScale().applyOptions({ barSpacing: 6, rightOffset: 6 });
+    chart.current?.timeScale().applyOptions({ barSpacing: fast ? 8 : 6, rightOffset: 6 });
     chart.current?.timeScale().resetTimeScale();
     setState("loading");
 
-    const apply = (t: StreamTrade) => {
+    const push = (c: Candle) => {
+      series.update(toBar(c));
+      vol.update(toVol(c));
+    };
+
+    /** Fast charts: carry the last close forward through quiet buckets so the timeline never has holes. */
+    const fillTo = (bucket: number) => {
+      if (!fast || !last) return;
+      // Bound the catch-up (e.g. after the tab slept) so we never emit thousands of bars at once.
+      if (bucket - last.time > step * 900) last = { ...last, time: bucket - step * 900 };
+      while (last.time < bucket) {
+        last = { time: last.time + step, open: last.close, high: last.close, low: last.close, close: last.close, volume: 0 };
+        push(last);
+        bars++;
+      }
+    };
+
+    const apply = (t: Tick) => {
       const bucket = Math.floor(t.ts / 1000 / step) * step;
-      if (last && bucket < last.time) return; // late trade for an already-closed bar
+      if (last && bucket < last.time) return; // late tick for an already-closed bar
+      fillTo(bucket);
       if (!last || bucket > last.time) {
-        last = { time: bucket, open: t.price, high: t.price, low: t.price, close: t.price, volume: t.qty };
+        last = { time: bucket, open: last?.close ?? t.price, high: t.price, low: t.price, close: t.price, volume: t.qty };
+        last.high = Math.max(last.high, last.open);
+        last.low = Math.min(last.low, last.open);
         bars++;
       } else {
         last = { ...last, high: Math.max(last.high, t.price), low: Math.min(last.low, t.price), close: t.price, volume: last.volume + t.qty };
       }
-      series.update(toBar(last));
-      vol.update(toVol(last));
+      push(last);
     };
 
-    const unsub = subscribeTrades(symbol, (trades) => {
-      if (!ready) return void pending.push(...trades);
-      for (const t of trades) apply(t);
-      if (bars > MAX_LIVE_BARS) {
-        // Keep long-running 1s charts bounded.
-        const data = series.data().slice(-MAX_LIVE_BARS);
-        series.setData(data as ReturnType<typeof toBar>[]);
-        bars = data.length;
-      }
+    const trim = () => {
+      if (bars <= MAX_LIVE_BARS) return;
+      // Keep long-running 1s charts bounded.
+      const keep = series.data().slice(-MAX_LIVE_BARS);
+      series.setData(keep as ReturnType<typeof toBar>[]);
+      vol.setData((vol.data() as ReturnType<typeof toVol>[]).slice(-MAX_LIVE_BARS));
+      bars = keep.length;
+    };
+
+    const onTicks = (ticks: Tick[]) => {
+      const newest = ticks.at(-1);
+      if (newest) skew = newest.ts - Date.now();
+      if (!ready) return void pending.push(...ticks);
+      for (const t of ticks) apply(t);
+      trim();
       setState((s) => (s === "waiting" ? "ready" : s));
-    });
+    };
+
+    const unsubTrades = subscribeTrades(symbol, (trades) => onTicks(trades.map((t) => ({ price: t.price, qty: t.qty, ts: t.ts }))));
+    // Always subscribed (cheap), so quote memory builds up even while a slower timeframe is shown.
+    const unsubQuotes = subscribeQuotes(symbol, (q) => fast && onTicks([{ price: q.mid, qty: 0, ts: q.ts }]));
+    const clock = fast
+      ? setInterval(() => {
+          if (!ready || !last) return;
+          fillTo(Math.floor(venueNow() / 1000 / step) * step);
+          trim();
+        }, 250)
+      : undefined;
 
     (async () => {
       try {
-        if (isVenueInterval(interval)) {
+        if (!fast) {
           const hist = await api<Candle[]>(`/api/candles?symbol=${symbol}&interval=${interval}`);
           if (stop) return;
           series.setData(hist.map(toBar));
@@ -121,25 +164,30 @@ export function PriceChart({ symbol, interval, decimals, lines }: { symbol: stri
           bars = hist.length;
           chart.current?.timeScale().fitContent();
         } else {
-          // Seed sub-minute charts with every trade this page has already seen, plus the venue's last prints
-          // (its REST API only returns ~50), de-duplicated.
+          // Seed with everything this page has already seen (quotes + trades) plus the venue's last prints
+          // (its REST API only returns ~50 trades), de-duplicated and in time order.
           const { trades } = await api<{ trades: StreamTrade[] }>(`/api/book?symbol=${symbol}`);
           if (stop) return;
           const seen = new Set<string>();
-          [...trades, ...rememberedTrades(symbol)]
-            .filter((t) => {
-              const k = `${t.ts}:${t.price}:${t.qty}`;
-              return !seen.has(k) && (seen.add(k), true);
-            })
-            .sort((a, b) => a.ts - b.ts)
-            .forEach(apply);
+          const seedTrades = [...trades, ...rememberedTrades(symbol)].filter((t) => {
+            const k = `${t.ts}:${t.price}:${t.qty}`;
+            return !seen.has(k) && (seen.add(k), true);
+          });
+          const ticks: Tick[] = [
+            ...seedTrades.map((t) => ({ price: t.price, qty: t.qty, ts: t.ts })),
+            ...rememberedQuotes(symbol).map((q) => ({ price: q.mid, qty: 0, ts: q.ts })),
+          ].sort((x, y) => x.ts - y.ts);
+          // Start the continuous timeline at most 15 minutes back, so a sparse seed isn't a long flat line.
+          const from = venueNow() - 15 * 60_000;
+          const recent = ticks.filter((t) => t.ts >= from);
+          (recent.length ? recent : ticks.slice(-1)).forEach(apply);
         }
         ready = true;
-        pending.sort((a, b) => a.ts - b.ts).forEach(apply);
+        pending.sort((x, y) => x.ts - y.ts).forEach(apply);
         pending.length = 0;
-        if (!isVenueInterval(interval)) {
-          // Sub-minute bars are few at first: show them at a readable width, pinned to now.
-          chart.current?.timeScale().applyOptions({ barSpacing: 10 });
+        if (fast) {
+          fillTo(Math.floor(venueNow() / 1000 / step) * step);
+          trim();
           chart.current?.timeScale().scrollToRealTime();
         }
         setState(bars > 0 ? "ready" : "waiting");
@@ -150,7 +198,9 @@ export function PriceChart({ symbol, interval, decimals, lines }: { symbol: stri
 
     return () => {
       stop = true;
-      unsub();
+      unsubTrades();
+      unsubQuotes();
+      if (clock) clearInterval(clock);
     };
   }, [symbol, interval]);
 
