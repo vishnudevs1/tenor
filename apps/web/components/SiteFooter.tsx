@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { X_HANDLE, X_URL } from "@/lib/brand";
 import { Logo } from "./Logo";
 import { XLink } from "./XLink";
 
@@ -15,7 +14,7 @@ export function SiteFooter() {
           <XLink className="mt-5 inline-grid size-9 place-items-center rounded-full border border-line text-muted transition-colors hover:border-line-strong hover:text-fg" />
         </div>
         {[
-          { h: "Product", l: [["Challenges", "/#challenges"], ["Transparency", "/transparency"], ["Dashboard", "/dashboard"], [`X · @${X_HANDLE}`, X_URL]] },
+          { h: "Product", l: [["Challenges", "/#challenges"], ["Transparency", "/transparency"], ["Dashboard", "/dashboard"]] },
           { h: "Built on Arc", l: [["Arc docs", "https://docs.arc.io"], ["Explorer", "https://explorer.testnet.arc.io"], ["Faucet", "https://faucet.circle.com"]] },
           { h: "Legal", l: [["Terms", "#"], ["Privacy", "#"], ["Restricted regions", "#"]] },
         ].map((c) => (
