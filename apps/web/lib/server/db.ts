@@ -145,7 +145,7 @@ async function pglite(): Promise<Driver> {
 async function open(): Promise<Driver> {
   const url = process.env.DATABASE_URL;
   // Serverless file systems are read-only and per-instance: never fall back to PGlite there.
-  if (!url && process.env.VERCEL) throw new Error("DATABASE_URL is not set — connect a Postgres database (e.g. Neon) to this Vercel project");
+  if (!url && process.env.VERCEL) throw new Error("DATABASE_URL is not set. Connect a Postgres database (e.g. Neon) to this Vercel project");
   const d = url ? await postgres(url) : await pglite();
   // Serialize schema setup across concurrent cold starts.
   await d.tx(async (t) => {

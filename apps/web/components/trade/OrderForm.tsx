@@ -184,7 +184,7 @@ export function OrderForm({
           disabled={!active || busy || notional <= 0 || !stats?.open}
           className={cx("h-11 w-full rounded-full text-sm font-semibold transition-opacity disabled:opacity-40", side === "buy" ? "bg-up text-bg" : "bg-down text-bg")}
         >
-          {!active ? "Account is not active" : stats && !stats.open ? "Market closed — new trades paused" : busy ? "Placing…" : `${side === "buy" ? "Buy / Long" : "Sell / Short"} ${market.base}`}
+          {!active ? "Account is not active" : stats && !stats.open ? "Market closed. New trades paused" : busy ? "Placing…" : `${side === "buy" ? "Buy / Long" : "Sell / Short"} ${market.base}`}
         </button>
       ) : (
         <ButtonLink href="/challenges" className="w-full">Buy a challenge to trade</ButtonLink>
@@ -193,11 +193,11 @@ export function OrderForm({
 
       <dl className="space-y-1.5 border-t border-line pt-3 text-xs">
         {[
-          ["Available to trade", account ? usd(maxNotional) : "—"],
-          ["Position cap", cap > 0 ? usd(cap) : "—"],
+          ["Available to trade", account ? usd(maxNotional) : "--"],
+          ["Position cap", cap > 0 ? usd(cap) : "--"],
           ["Open trades in this market", String(inMarket.length)],
-          ["Est. fee", notional > 0 ? usd(fee, true) : "—"],
-          ["Est. breach price", breach && breach > 0 ? formatPrice(breach, market) : "—"],
+          ["Est. fee", notional > 0 ? usd(fee, true) : "--"],
+          ["Est. breach price", breach && breach > 0 ? formatPrice(breach, market) : "--"],
         ].map(([k, v]) => (
           <div key={k} className="flex justify-between">
             <dt className="text-muted">{k}</dt>

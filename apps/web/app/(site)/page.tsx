@@ -1,6 +1,5 @@
-import Link from "next/link";
 import { ChallengePicker } from "@/components/ChallengePicker";
-import { ButtonLink, Card, Dot, SectionHeading } from "@/components/ui";
+import { ButtonLink, Card, SectionHeading } from "@/components/ui";
 import { CURRENCIES, firm } from "@/lib/data";
 
 const PROMISES = [
@@ -22,7 +21,7 @@ const PROMISES = [
 ];
 
 const STEPS = [
-  { title: "Pick a challenge", body: "Choose a size and plan. Pay in USDC — from any chain, or by card." },
+  { title: "Pick a challenge", body: "Choose a size and plan. Pay in USDC from any chain, or by card." },
   { title: "Pass the evaluation", body: "Hit the target on a clearly-labelled simulated account. No time limit." },
   { title: "Trade real capital", body: "Get a funded account on an Arc venue with a trade-only key. Real fills, same rules." },
   { title: "Get paid in seconds", body: "Request a payout any time. 80% to you, in USDC or your local stablecoin." },
@@ -32,7 +31,7 @@ const FAQ = [
   ["Is the evaluation real trading?", "No. Evaluations are simulated and labelled that way everywhere. Once you pass, your funded account trades real capital owned by Tenor on Arc-native venues."],
   ["How can I verify you don't B-book?", "Every funded account maps to a venue sub-account, and we publish a daily Merkle root of all account states on Arc. The Transparency page shows reserves, liabilities and the coverage ratio live."],
   ["Why does the fee change?", "Fees are set by the PricingEngine contract from our trailing 90-day pass rate, so they always cover the worst case. Your rules are locked at the version you signed up under."],
-  ["Which currencies can I be paid in?", "USDC, EURC and local stablecoins on Arc such as BRLA, MXNB, JPYC, KRW1, QCAD and ZARU — converted via Circle StableFX at payout."],
+  ["Which currencies can I be paid in?", "USDC, EURC and local stablecoins on Arc such as BRLA, MXNB, JPYC, KRW1, QCAD and ZARU, converted via Circle StableFX at payout."],
   ["Where is Tenor available?", "Launching in LatAm, Southeast Asia, the Gulf, Africa and the EU. Not available to US or Indian residents for leveraged products at launch."],
 ];
 
@@ -41,25 +40,12 @@ export default function Home() {
     <>
       {/* Hero */}
       <section className="hero-glow relative overflow-hidden">
-        <div className="mx-auto max-w-6xl px-4 pb-16 pt-14 text-center sm:px-6 sm:pb-20 sm:pt-20">
-          <Link
-            href="/challenges"
-            className="inline-flex items-center gap-2.5 rounded-full border border-line bg-surface/80 py-1.5 pl-3 pr-4 text-sm text-muted transition-colors hover:border-line-strong hover:text-fg"
-          >
-            <Dot />
-            <span>
-              Live prices from <span className="font-medium text-fg">Arc venues</span>
-            </span>
-            <span className="text-faint">·</span>
-            <span className="hidden sm:inline">try a free demo</span>
-            <span aria-hidden>→</span>
-          </Link>
-
-          <h1 className="mx-auto mt-8 max-w-4xl font-display text-[44px] leading-[1.02] tracking-tight sm:text-7xl md:text-[84px]">
+        <div className="mx-auto max-w-6xl px-4 pb-16 pt-16 text-center sm:px-6 sm:pb-20 sm:pt-24">
+          <h1 className="mx-auto max-w-4xl font-display text-[44px] leading-[1.02] tracking-tight sm:text-7xl md:text-[84px]">
             The prop firm that <em className="pr-[0.12em] text-accent">can't</em> trade against you.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
-            Pass a simulated evaluation, then trade real capital on real venues. Every possible loss is pre-funded onchain — and you get paid in your own currency.
+            Pass a simulated evaluation, then trade real capital on real venues. Every possible loss is pre-funded onchain, and you get paid in your own currency.
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <ButtonLink href="#challenges" size="lg" className="w-full sm:w-auto">
@@ -133,7 +119,7 @@ export default function Home() {
               <div className="text-xs font-medium uppercase tracking-[0.18em] text-accent">Only on Arc</div>
               <h2 className="mt-3 font-display text-4xl leading-[1.05] sm:text-5xl">Get paid in your own currency.</h2>
               <p className="mt-4 text-[15px] leading-relaxed text-muted">
-                Arc hosts local stablecoins in one place. Choose BRLA, MXNB, JPYC and more at payout — converted atomically through Circle StableFX and final in under a second.
+                Arc hosts local stablecoins in one place. Choose BRLA, MXNB, JPYC and more at payout, converted atomically through Circle StableFX and final in under a second.
               </p>
             </div>
             <ul className="flex flex-wrap gap-2" aria-label="Payout currencies">

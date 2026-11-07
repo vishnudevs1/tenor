@@ -39,9 +39,9 @@ function BookView({ market }: { market: Market }) {
       </div>
       {askRows.map((l) => <Row key={`a${l.price}`} l={l} side="ask" />)}
       <div className="my-1 flex items-center justify-between border-y border-line px-3 py-1.5 text-xs">
-        <span className="num text-sm font-medium">{mid != null ? formatPrice(mid, market) : "—"}</span>
+        <span className="num text-sm font-medium">{mid != null ? formatPrice(mid, market) : "--"}</span>
         <span className="text-muted">
-          Spread <span className="num text-fg">{spread != null ? formatPrice(spread, market) : "—"}</span>
+          Spread <span className="num text-fg">{spread != null ? formatPrice(spread, market) : "--"}</span>
         </span>
       </div>
       {bidRows.map((l) => <Row key={`b${l.price}`} l={l} side="bid" />)}

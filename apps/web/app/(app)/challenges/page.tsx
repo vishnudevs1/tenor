@@ -3,7 +3,7 @@ import { currentUser } from "@/lib/server/user";
 import { activeCapital } from "@/lib/server/checkout";
 import { ChallengeShop } from "./ChallengeShop";
 
-export const metadata: Metadata = { title: "Buy Challenge — Tenor" };
+export const metadata: Metadata = { title: "Buy Challenge | Tenor" };
 
 const STEPS = [
   ["Complete a challenge", "Hit the profit target on a simulated account using live venue prices."],
@@ -18,7 +18,7 @@ const FAQ = [
   ["What counts as a breach?", "Equity touching the daily loss limit (measured from the day's starting equity, reset 00:00 UTC) or the static max drawdown (measured from the starting balance). Open positions are closed automatically."],
   ["How do 2-step challenges work?", "Phase 1 has an 8% target, phase 2 a 5% target, with the same loss limits. Passing phase 1 resets the balance and starts phase 2 on the same account."],
   ["How do I pay?", "In USDC on Arc. Connect a wallet at checkout, sign a message to prove it's yours, and send the payment. Accounts open as soon as the transaction is verified on-chain."],
-  ["Why do prices differ from other firms?", "Fees are set from our trailing pass rate so that every funded account's worst-case loss is pre-funded — we never need a B-book. Turbo is cheapest because its drawdown is tightest."],
+  ["Why do prices differ from other firms?", "Fees are set from our trailing pass rate so that every funded account's worst-case loss is pre-funded, so we never need a B-book. Turbo is cheapest because its drawdown is tightest."],
 ];
 
 export default async function ChallengesPage() {

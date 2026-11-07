@@ -79,7 +79,7 @@ export async function createOrder(userId: string, lines: CartLine[], wallet: str
 
   const used = await activeCapital(userId);
   if (used + capital > MAX_ACTIVE_CAPITAL) {
-    throw new TradeError(`Active capital is capped at $${MAX_ACTIVE_CAPITAL.toLocaleString()} — you have $${used.toLocaleString()} active`);
+    throw new TradeError(`Active capital is capped at $${MAX_ACTIVE_CAPITAL.toLocaleString()}. You have $${used.toLocaleString()} active`);
   }
 
   const id = newId("OR");
@@ -100,7 +100,7 @@ export async function confirmOrder(userId: string, orderId: string, txHash: stri
   const order = await db.one<OrderRow>("SELECT * FROM orders WHERE id = $1", [orderId]);
   if (!order || order.user_id !== userId) throw new TradeError("Order not found", 404);
   if (order.status === "paid") return { accountIds: (await db.all<{ id: string }>("SELECT id FROM accounts WHERE order_id = $1 ORDER BY created_at", [orderId])).map((r) => r.id) };
-  if (Date.now() - order.created_at > ORDER_TTL_MS) throw new TradeError("This order expired — please check out again", 410);
+  if (Date.now() - order.created_at > ORDER_TTL_MS) throw new TradeError("This order expired. Please check out again.", 410);
   if (!isHash(txHash)) throw new TradeError("Invalid transaction hash");
   if (await db.one("SELECT id FROM orders WHERE tx_hash = $1", [txHash])) throw new TradeError("This transaction was already used", 409);
 
@@ -109,7 +109,7 @@ export async function confirmOrder(userId: string, orderId: string, txHash: stri
   if (!signed) throw new TradeError("Wallet signature doesn't match this order", 401);
 
   const receipt = await client.getTransactionReceipt({ hash: txHash as Hex }).catch(() => null);
-  if (!receipt) throw new TradeError("Transaction not found on Arc yet — retrying", 409);
+  if (!receipt) throw new TradeError("Transaction not found on Arc yet. Retrying…", 409);
   if (receipt.status !== "success") throw new TradeError("The payment transaction failed on Arc");
 
   const treasury = treasuryAddress()!;

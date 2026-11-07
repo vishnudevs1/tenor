@@ -4,7 +4,7 @@ import { currentUser } from "@/lib/server/user";
 import { DEFAULT_MARKET, MARKET_BY_SYMBOL } from "@/lib/markets";
 import { TradeClient } from "./TradeClient";
 
-export const metadata: Metadata = { title: "Trade — Tenor" };
+export const metadata: Metadata = { title: "Trade | Tenor" };
 
 export default async function TradePage({ searchParams }: { searchParams: Promise<{ account?: string; market?: string }> }) {
   const { account, market } = await searchParams;

@@ -4,7 +4,7 @@ import { IS_DEMO, coverage, firm, recentPayouts } from "@/lib/data";
 import { arc, txUrl } from "@/lib/arc";
 import { pct, shortHash, usd } from "@/lib/format";
 
-export const metadata: Metadata = { title: "Transparency — Tenor" };
+export const metadata: Metadata = { title: "Transparency | Tenor" };
 
 export default function TransparencyPage() {
   const required = firm.liveMaxLoss * firm.bufferTarget;

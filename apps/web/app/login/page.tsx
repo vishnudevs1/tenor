@@ -7,7 +7,7 @@ import { XLink } from "@/components/XLink";
 import { signInWithGoogle } from "./actions";
 import { GoogleButton } from "./GoogleButton";
 
-export const metadata: Metadata = { title: "Sign in — Tenor" };
+export const metadata: Metadata = { title: "Sign in | Tenor" };
 
 const ERRORS: Record<string, string> = {
   AccessDenied: "Access was denied. Try a different Google account.",

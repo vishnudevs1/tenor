@@ -96,7 +96,7 @@ export function HomeClient({ initial, firstName }: { initial: AccountView[]; fir
         <div className={cx("num mt-2 text-sm", today >= 0 ? "text-up" : "text-down")}>
           {signedUsd(today)} <span className="text-muted">today</span>
         </div>
-        {stale && <div className="mt-2 text-xs text-warn">Live prices delayed — values may be out of date</div>}
+        {stale && <div className="mt-2 text-xs text-warn">Live prices are delayed. Values may be out of date.</div>}
 
         <div className="mx-auto mt-8 grid max-w-md grid-cols-2 gap-3">
           <ButtonLink href={active[0] ? `/trade?account=${active[0].id}` : "/trade"} size="lg">Trade</ButtonLink>

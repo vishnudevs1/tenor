@@ -8,7 +8,7 @@ const serif = Instrument_Serif({ subsets: ["latin"], weight: "400", variable: "-
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono-face" });
 
 export const metadata: Metadata = {
-  title: "Tenor — the prop firm that can't trade against you",
+  title: "Tenor | The prop firm that can't trade against you",
   description:
     "100% A-book prop trading on Arc. Every possible loss is pre-funded onchain, and you get paid in your own currency in seconds.",
   // Shared links credit @Tenor_xyz on X.

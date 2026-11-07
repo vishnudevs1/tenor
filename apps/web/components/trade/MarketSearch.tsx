@@ -217,7 +217,7 @@ export function MarketSearch({ open, onClose, value, stats, onSelect }: { open: 
                           {s && !s.open && <span className="text-[11px] text-warn">closed</span>}
                         </div>
                       </td>
-                      <td className="num px-3 py-3.5 text-right">{s ? formatPrice(s.mark, m) : "—"}</td>
+                      <td className="num px-3 py-3.5 text-right">{s ? formatPrice(s.mark, m) : "--"}</td>
                       <td className={cx("num whitespace-nowrap px-3 py-3.5 text-right", up ? "text-up" : "text-down")}>
                         {s ? (
                           <>
@@ -229,14 +229,14 @@ export function MarketSearch({ open, onClose, value, stats, onSelect }: { open: 
                             {Math.abs(s.change24h * 100).toFixed(2)}%
                           </>
                         ) : (
-                          "—"
+                          "--"
                         )}
                       </td>
-                      <td className="num hidden px-3 py-3.5 text-right sm:table-cell">{s ? `$${short(s.volume24h)}` : "—"}</td>
+                      <td className="num hidden px-3 py-3.5 text-right sm:table-cell">{s ? `$${short(s.volume24h)}` : "--"}</td>
                       <td className="num hidden px-3 py-3.5 text-right md:table-cell" title="Max open position per account">
-                        {s?.positionCap ? `$${short(s.positionCap)}` : "—"}
+                        {s?.positionCap ? `$${short(s.positionCap)}` : "--"}
                       </td>
-                      <td className="num hidden px-3 py-3.5 pr-4 text-right md:table-cell">{s ? `$${short(s.openInterest)}` : "—"}</td>
+                      <td className="num hidden px-3 py-3.5 pr-4 text-right md:table-cell">{s ? `$${short(s.openInterest)}` : "--"}</td>
                     </tr>
                   );
                 })}

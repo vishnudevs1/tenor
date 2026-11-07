@@ -6,7 +6,7 @@ import { listAccounts } from "@/lib/server/engine";
 import { currentUser } from "@/lib/server/user";
 import { pct } from "@/lib/format";
 
-export const metadata: Metadata = { title: "Payouts — Tenor" };
+export const metadata: Metadata = { title: "Payouts | Tenor" };
 
 export default async function PayoutsPage() {
   const user = (await currentUser())!;

@@ -17,7 +17,7 @@ const CLOSE_SIZES = [
 ];
 const fmt = (n: number | null | undefined, market: string) => {
   const m = MARKET_BY_SYMBOL[market];
-  return n == null ? "—" : m ? formatPrice(n, m) : String(n);
+  return n == null ? "--" : m ? formatPrice(n, m) : String(n);
 };
 const age = (ts: number) => {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -188,7 +188,7 @@ export function Positions({ account, history, marks, onChange }: { account: Acco
                 const m = MARKET_BY_SYMBOL[h.market];
                 return (
                   <tr key={`${h.ticketId ?? "x"}-${h.closedAt}-${i}`}>
-                    <td className="num px-3 py-2.5 text-muted">{h.ticketId ? `#${h.ticketId}` : "—"}</td>
+                    <td className="num px-3 py-2.5 text-muted">{h.ticketId ? `#${h.ticketId}` : "--"}</td>
                     <td className="px-3 py-2.5">
                       {m ? displayPair(m) : h.market} <span className={h.side === "long" ? "text-up" : "text-down"}>{h.side === "long" ? "Long" : "Short"}</span>
                     </td>
@@ -198,7 +198,7 @@ export function Positions({ account, history, marks, onChange }: { account: Acco
                     <td className={cx("num px-3 py-2.5 text-right", h.pnl >= 0 ? "text-up" : "text-down")}>{signedUsd(h.pnl)}</td>
                     <td className="num px-3 py-2.5 text-right text-muted">−{usd(h.fees, true)}</td>
                     <td className={cx("num px-3 py-2.5 text-right font-medium", h.net >= 0 ? "text-up" : "text-down")}>{signedUsd(h.net)}</td>
-                    <td className="num px-3 py-2.5 text-right text-muted">{h.openedAt ? duration(h.closedAt - h.openedAt) : "—"}</td>
+                    <td className="num px-3 py-2.5 text-right text-muted">{h.openedAt ? duration(h.closedAt - h.openedAt) : "--"}</td>
                     <td className="px-3 py-2.5 text-muted">{REASONS[h.reason] ?? h.reason}</td>
                   </tr>
                 );

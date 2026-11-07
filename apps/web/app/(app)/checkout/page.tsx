@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { treasuryAddress } from "@/lib/server/checkout";
 import { CheckoutClient } from "./CheckoutClient";
 
-export const metadata: Metadata = { title: "Checkout — Tenor" };
+export const metadata: Metadata = { title: "Checkout | Tenor" };
 
 export default function CheckoutPage() {
   return (

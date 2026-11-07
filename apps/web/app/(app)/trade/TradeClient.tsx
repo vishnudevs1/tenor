@@ -97,18 +97,18 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
       <Panel className="no-scrollbar flex items-center gap-6 self-start overflow-x-auto px-3 py-2.5 lg:col-span-2 lg:col-start-1 lg:row-start-1">
         <MarketButton symbol={symbol} onOpen={() => setSearchOpen(true)} />
         <div className="shrink-0">
-          <div className="num text-xl font-semibold">{last ? formatPrice(last, market) : mark ? formatPrice(mark, market) : "—"}</div>
+          <div className="num text-xl font-semibold">{last ? formatPrice(last, market) : mark ? formatPrice(mark, market) : "--"}</div>
           <div className="text-[11px] text-faint">Last trade</div>
         </div>
         <dl className="flex shrink-0 gap-6 text-xs">
           {[
-            ["Mark", mark ? formatPrice(mark, market) : "—", null],
-            ["Position cap", stats?.positionCap ? `${short(stats.positionCap)}` : "—", null],
-            ["Index", stats ? formatPrice(stats.index, market) : "—", null],
-            ["24h change", stats ? pct(stats.change24h, 2) : "—", stats ? (stats.change24h >= 0 ? "text-up" : "text-down") : null],
-            ["24h volume", stats ? `$${short(stats.volume24h)}` : "—", null],
-            ["Open interest", stats ? `$${short(stats.openInterest)}` : "—", null],
-            ["Funding / 1h", stats ? pct(stats.funding, 4) : "—", null],
+            ["Mark", mark ? formatPrice(mark, market) : "--", null],
+            ["Position cap", stats?.positionCap ? `${short(stats.positionCap)}` : "--", null],
+            ["Index", stats ? formatPrice(stats.index, market) : "--", null],
+            ["24h change", stats ? pct(stats.change24h, 2) : "--", stats ? (stats.change24h >= 0 ? "text-up" : "text-down") : null],
+            ["24h volume", stats ? `$${short(stats.volume24h)}` : "--", null],
+            ["Open interest", stats ? `$${short(stats.openInterest)}` : "--", null],
+            ["Funding / 1h", stats ? pct(stats.funding, 4) : "--", null],
           ].map(([k, v, tone]) => (
             <div key={k}>
               <dt className="text-faint">{k}</dt>
@@ -154,7 +154,7 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
                 ))}
               </select>
             ) : (
-              <p className="mt-1 text-sm">No accounts yet — <Link href="/challenges" className="text-accent">buy a challenge</Link> or start a free demo.</p>
+              <p className="mt-1 text-sm">No accounts yet. <Link href="/challenges" className="text-accent">Buy a challenge</Link> or start a free demo.</p>
             )}
           </div>
           <OrderForm account={a} market={market} stats={stats} mark={mark} equity={a?.equity ?? 0} onPlaced={onAccount} />
@@ -199,7 +199,7 @@ export function TradeClient({ accounts, initialAccountId, initialMarket }: { acc
               </div>
             )}
             {a.status === "breached" && <p className="mt-3 text-xs text-down">This account was closed: {a.breachReason === "daily_loss" ? "daily loss limit" : "max drawdown"} reached.</p>}
-            {a.status === "passed" && <p className="mt-3 text-xs text-up">Target reached — {a.demo ? "nice practice run." : "next: KYC, then your funded account."}</p>}
+            {a.status === "passed" && <p className="mt-3 text-xs text-up">Target reached. {a.demo ? "Nice practice run." : "Next: KYC, then your funded account."}</p>}
           </Panel>
         )}
       </div>

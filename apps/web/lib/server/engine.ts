@@ -397,8 +397,8 @@ export async function placeOrder(userId: string, accountId: string, input: Order
   const [, snap, book] = await Promise.all([owned(userId, accountId), snapshot(), getOrderBook(m.symbol).catch(() => null)]);
   const marks = freshMarks(snap);
   const stats = snap?.stats[m.symbol];
-  if (!marks || !stats || !book) throw new TradeError("Live prices are unavailable right now — try again in a moment", 503);
-  if (!stats.open) throw new TradeError(`${m.name} is closed right now — you can still close open trades`);
+  if (!marks || !stats || !book) throw new TradeError("Live prices are unavailable right now. Please try again in a moment.", 503);
+  if (!stats.open) throw new TradeError(`${m.name} is closed right now. You can still close open trades.`);
   const dir = input.side === "buy" ? 1 : -1;
   const leverage = input.leverage ?? m.maxLeverage;
   if (!(Number.isFinite(leverage) && leverage >= 1 && leverage <= m.maxLeverage)) {
@@ -428,7 +428,7 @@ export async function placeOrder(userId: string, accountId: string, input: Order
       throw new TradeError(`At ${leverage}× leverage you can add up to $${Math.max(0, Math.floor(maxNotional - existing)).toLocaleString()} in ${m.base}`);
     }
     if (gross > cap) {
-      throw new TradeError(`Position cap for ${m.base} is $${cap.toLocaleString()} — you can add up to $${Math.max(0, Math.floor(cap - existing)).toLocaleString()}`);
+      throw new TradeError(`Position cap for ${m.base} is $${cap.toLocaleString()}. You can add up to $${Math.max(0, Math.floor(cap - existing)).toLocaleString()}`);
     }
 
     const now = Date.now();
@@ -460,7 +460,7 @@ export async function closeTickets(userId: string, accountId: string, ticketId: 
   if (targets.length === 0) throw new TradeError(ticketId === "all" ? "No open trades" : "This trade is already closed", 409);
 
   const marks = freshMarks(snap);
-  if (!marks) throw new TradeError("Live prices are unavailable right now — try again in a moment", 503);
+  if (!marks) throw new TradeError("Live prices are unavailable right now. Please try again in a moment.", 503);
   const markets = [...new Set(targets.map((k) => k.market))];
   const books = new Map<string, OrderBook | null>(await Promise.all(markets.map(async (s) => [s, await getOrderBook(s).catch(() => null)] as const)));
 
@@ -497,7 +497,7 @@ export async function updateTicket(userId: string, accountId: string, ticketId: 
     const k = await t.one<TicketRow>("SELECT * FROM tickets WHERE id = $1 AND account_id = $2", [ticketId, accountId]);
     if (!k) throw new TradeError("This trade is already closed", 409);
     const mark = marks?.[k.market];
-    if (!mark) throw new TradeError("Live prices are unavailable right now — try again in a moment", 503);
+    if (!mark) throw new TradeError("Live prices are unavailable right now. Please try again in a moment.", 503);
     checkTpSl(Math.sign(k.qty), mark, tp, sl);
     await t.run("UPDATE tickets SET tp = $1, sl = $2 WHERE id = $3", [tp, sl, k.id]);
     return { view: toView(a, await getTickets(t, a.id), marks) };
