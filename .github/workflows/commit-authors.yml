@@ -1,0 +1,61 @@
+# Commits must be authored by the person contributing them.
+# Fails when a commit is authored/committed as an AI tool or carries an AI co-author or session trailer,
+# so it's caught on the PR instead of showing up in the repo's Contributors list after merge.
+name: Commit authors
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Reject AI-authored commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Commits in this PR / push. After a force-push the old tip may be gone, so fall back to recent history.
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            RANGE="$BASE..$HEAD"
+          else
+            RANGE="-n 50 $HEAD"
+          fi
+
+          bad=""
+          for c in $(git rev-list $RANGE); do
+            who="$(git log -1 --format='%ae %ce' "$c")"
+            msg="$(git log -1 --format='%B' "$c")"
+            if echo "$who" | grep -qiE 'noreply@anthropic\.com' \
+              || echo "$msg" | grep -qiE '^(Co-Authored-By:.*(claude|noreply@anthropic\.com)|Claude-Session:)'; then
+              bad="$bad $c"
+              echo "::error::$(git log -1 --format='%h  %an <%ae>  %s' "$c")"
+            fi
+          done
+
+          if [ -n "$bad" ]; then
+            cat <<'EOF'
+
+          These commits are authored by an AI tool or carry an AI co-author line.
+          Please re-author them as yourself and drop the trailers, then force-push your branch:
+
+            git rebase -i <base>        # mark each listed commit as "reword"/"edit"
+            git commit --amend --reset-author   # sets you as the author
+            # delete any "Co-Authored-By: Claude …" and "Claude-Session: …" lines from the message
+
+          Tip: Claude Code can be configured not to add co-author attribution to commits (see its settings docs).
+          EOF
+            exit 1
+          fi
+          echo "All commits are authored by people."
