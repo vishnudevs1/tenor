@@ -80,8 +80,8 @@ export interface Candle {
 export const INTERVALS = { "1m": "PT1M", "5m": "PT5M", "15m": "PT15M", "1h": "PT1H", "4h": "PT4H", "1d": "P1D" } as const;
 export type IntervalKey = keyof typeof INTERVALS;
 
-/** Every interval the chart offers. Sub-minute candles are built live in the browser from the trade stream. */
-export const CHART_INTERVALS = ["1s", "5s", "1m", "5m", "15m", "1h", "4h", "1d"] as const;
+/** Every interval the chart offers. 30s candles are built live in the browser (the venue has no sub-minute history). */
+export const CHART_INTERVALS = ["30s", "1m", "5m", "15m", "1h", "4h", "1d"] as const;
 export type ChartInterval = (typeof CHART_INTERVALS)[number];
-export const INTERVAL_SECONDS: Record<ChartInterval, number> = { "1s": 1, "5s": 5, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
+export const INTERVAL_SECONDS: Record<ChartInterval, number> = { "30s": 30, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
 export const isVenueInterval = (i: ChartInterval): i is IntervalKey => i in INTERVALS;

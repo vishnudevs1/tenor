@@ -19,7 +19,7 @@ import { rememberedQuotes, rememberedTrades, subscribeQuotes, subscribeTrades, t
 
 // TradingView Lightweight Charts, driven tick-by-tick by the venue's trade stream.
 // ≥1m: history from the venue's REST candles, then every trade updates the live candle.
-// 1s/5s: built in the browser from the live best bid/ask (~10/s) plus trades for volume; quiet seconds get
+// 30s: built in the browser from the live best bid/ask (~10/s) plus trades for volume; quiet periods get
 // flat candles so the timeline is continuous (the venue has no sub-minute history).
 
 // Canvas can't read CSS variables — these mirror the tokens in globals.css.
@@ -87,7 +87,7 @@ export function PriceChart({ symbol, interval, decimals, lines }: { symbol: stri
 
     series.setData([]);
     vol.setData([]);
-    // Each timeframe starts from a fresh zoom; inheriting 1m's zoom is what squeezed 1s bars into hairlines.
+    // Each timeframe starts from a fresh zoom rather than inheriting the previous one.
     chart.current?.timeScale().applyOptions({ barSpacing: fast ? 8 : 6, rightOffset: 6 });
     chart.current?.timeScale().resetTimeScale();
     setState("loading");
@@ -126,7 +126,7 @@ export function PriceChart({ symbol, interval, decimals, lines }: { symbol: stri
 
     const trim = () => {
       if (bars <= MAX_LIVE_BARS) return;
-      // Keep long-running 1s charts bounded.
+      // Keep long-running live charts bounded.
       const keep = series.data().slice(-MAX_LIVE_BARS);
       series.setData(keep as ReturnType<typeof toBar>[]);
       vol.setData((vol.data() as ReturnType<typeof toVol>[]).slice(-MAX_LIVE_BARS));
@@ -177,8 +177,8 @@ export function PriceChart({ symbol, interval, decimals, lines }: { symbol: stri
             ...seedTrades.map((t) => ({ price: t.price, qty: t.qty, ts: t.ts })),
             ...rememberedQuotes(symbol).map((q) => ({ price: q.mid, qty: 0, ts: q.ts })),
           ].sort((x, y) => x.ts - y.ts);
-          // Start the continuous timeline at most 15 minutes back, so a sparse seed isn't a long flat line.
-          const from = venueNow() - 15 * 60_000;
+          // Start the continuous timeline at most 30 minutes back (what the page remembers).
+          const from = venueNow() - 30 * 60_000;
           const recent = ticks.filter((t) => t.ts >= from);
           (recent.length ? recent : ticks.slice(-1)).forEach(apply);
         }

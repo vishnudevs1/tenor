@@ -9,7 +9,7 @@ import type { BookLevel } from "./markets";
 
 const BASE = process.env.NEXT_PUBLIC_EXTENDED_WS_URL ?? "wss://api.starknet.extended.exchange/stream.extended.exchange/v1";
 const FRAME_MS = 33; // repaint at most ~30×/s, in step with the display, regardless of message rate
-const TRADE_MEMORY_MS = 30 * 60_000; // per-market trade memory that seeds 1s/5s charts
+const TRADE_MEMORY_MS = 30 * 60_000; // per-market trade memory that seeds 30s charts
 
 /** Run fn on animation frames (≥ FRAME_MS apart) until stopped. Pauses automatically in background tabs. */
 function frames(fn: () => void) {
@@ -79,7 +79,7 @@ interface TradeHub {
 }
 const tradeHubs = new Map<string, TradeHub>();
 
-/** Trades seen on this page for a market (oldest first) — lets 1s/5s charts open with candles already drawn. */
+/** Trades seen on this page for a market (oldest first) — lets 30s charts open with candles already drawn. */
 export function rememberedTrades(symbol: string): StreamTrade[] {
   return tradeHubs.get(symbol)?.memory.slice() ?? [];
 }
@@ -122,7 +122,7 @@ export function subscribeTrades(symbol: string, fn: TradeListener, onState?: (li
   };
 }
 
-// ── Quotes: top of book (~10 updates/s) — the continuous price that drives 1s/5s candles ──
+// ── Quotes: top of book (~10 updates/s) — the continuous price that drives 30s candles ──
 
 export interface Quote {
   bid: number;
