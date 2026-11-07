@@ -1,6 +1,6 @@
 # Tenor
 
-A 100% A-book prop firm built entirely on Circle's Arc: every funded trade is a real fill, every possible loss is pre-funded on-chain.
+A 100% A book prop firm built entirely on Circle's Arc: every funded trade is a real fill, every possible loss is pre-funded on-chain.
 
 ```
 apps/web/                Next.js 16 app (Tailwind v4)
