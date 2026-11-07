@@ -8,8 +8,6 @@ import { CartButton, CartProvider } from "./cart";
 import { Badge, cx } from "./ui";
 import { arc } from "@/lib/arc";
 import { signOutAction } from "@/app/login/actions";
-import { X_HANDLE, X_URL } from "@/lib/brand";
-import { XIcon } from "./XLink";
 
 export interface ShellUser {
   name: string | null;
@@ -76,11 +74,7 @@ function UserMenu({ user }: { user: ShellUser }) {
           </div>
           <div className="px-3 pb-2"><Badge tone="accent">{arc.name}</Badge></div>
           <div className="my-1 h-px bg-line" />
-          <Link role="menuitem" href="/transparency" className="block rounded-lg px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-fg">Transparency</Link>
-          <a role="menuitem" href={X_URL} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-fg">
-            <XIcon size={14} /> Follow @{X_HANDLE}
-          </a>
-          <form action={signOutAction}>
+          <Link role="menuitem" href="/transparency" className="block rounded-lg px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-fg">Transparency</Link>          <form action={signOutAction}>
             <button role="menuitem" type="submit" className="w-full rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-white/5 hover:text-down">Sign out</button>
           </form>
         </div>
