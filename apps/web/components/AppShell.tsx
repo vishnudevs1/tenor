@@ -74,7 +74,8 @@ function UserMenu({ user }: { user: ShellUser }) {
           </div>
           <div className="px-3 pb-2"><Badge tone="accent">{arc.name}</Badge></div>
           <div className="my-1 h-px bg-line" />
-          <Link role="menuitem" href="/transparency" className="block rounded-lg px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-fg">Transparency</Link>          <form action={signOutAction}>
+          <Link role="menuitem" href="/profile" onClick={() => setOpen(false)} className="block rounded-lg px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-fg">Profile</Link>
+          <Link role="menuitem" href="/transparency" onClick={() => setOpen(false)} className="block rounded-lg px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-fg">Transparency</Link>          <form action={signOutAction}>
             <button role="menuitem" type="submit" className="w-full rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-white/5 hover:text-down">Sign out</button>
           </form>
         </div>

@@ -9,5 +9,6 @@ process.env.TENOR_DATA_DIR = dir;
 
 await import("./engine.test.mjs");
 await import("./checkout.test.mjs");
+await import("./profile.test.mjs");
 
 process.exit(0); // PGlite keeps the event loop alive
