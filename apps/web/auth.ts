@@ -30,12 +30,41 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   pages: { signIn: "/login", error: "/login" },
   session: { strategy: "jwt" },
   callbacks: {
+    // Email identifies admins (ADMIN_EMAILS) and legacy rows to merge, so it must be one Google has verified.
+    // A Google account can carry an address its owner never proved they control.
+    signIn({ account, profile }) {
+      if (account?.provider === "google") return profile?.email_verified === true;
+      return false;
+    },
+    // `account` is only present on the sign-in request itself, so this runs exactly once per sign-in.
+    jwt({ token, account }) {
+      if (account) {
+        // Without a DB adapter, Auth.js gives every sign-in a fresh random user id (@auth/core oauth callback).
+        // Key users by Google's stable subject id instead, so signing in again finds the same user.
+        token.sub = account.providerAccountId;
+        token.loginAt = Date.now(); // currentUser() records it (DB kept out of here: proxy.ts loads this file too)
+        token.idv = 2;
+      } else if (token.idv !== 2) {
+        // Session from before the fix: its sub is a random per-sign-in id. End it once; the next
+        // sign-in merges that user's data into the stable id (see claimLegacyUsers).
+        return null;
+      }
+      return token;
+    },
     // token.sub is Google's stable subject id — our user primary key.
     session({ session, token }) {
       if (token.sub) session.user.id = token.sub;
+      if (typeof token.loginAt === "number") session.loginAt = token.loginAt;
       return session;
     },
   },
 });
+
+declare module "next-auth" {
+  interface Session {
+    /** When this session's Google sign-in happened (ms). Absent on sessions created before login tracking. */
+    loginAt?: number;
+  }
+}
 
 export const googleConfigured = Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET);

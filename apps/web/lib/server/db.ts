@@ -14,6 +14,16 @@ CREATE TABLE IF NOT EXISTS users (
   name        TEXT,
   created_at  BIGINT NOT NULL
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS image TEXT;               -- Google profile photo URL
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at BIGINT;      -- last authenticated request
+
+-- One row per Google sign-in. ts is the sign-in time stamped into the session token, so recording it is idempotent.
+CREATE TABLE IF NOT EXISTS logins (
+  user_id  TEXT NOT NULL REFERENCES users(id),
+  ts       BIGINT NOT NULL,
+  PRIMARY KEY (user_id, ts)
+);
+CREATE INDEX IF NOT EXISTS logins_ts ON logins(ts);
 
 CREATE TABLE IF NOT EXISTS orders (
   id            TEXT PRIMARY KEY,
