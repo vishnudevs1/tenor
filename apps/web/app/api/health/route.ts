@@ -19,7 +19,11 @@ export async function GET() {
     timed(
       db.one("SELECT 1 AS ok").then(
         () => ({ ok: true, driver: process.env.DATABASE_URL ? "postgres" : "pglite" }),
-        (e: Error) => ({ ok: false, error: e.message.slice(0, 200) }),
+        // Public endpoint: log the error server-side, never return it (it can name the DB host or user).
+        (e: Error) => {
+          console.error("health: database check failed", e);
+          return { ok: false };
+        },
       ),
     ),
     timed(
